@@ -1,0 +1,55 @@
+[package]
+name = "dewm"
+version = "0.1.0"
+edition = "2021"
+description = "A Wayland compositor with a dynamic 2D workspace grid"
+license = "MIT"
+
+[[bin]]
+name = "dewm"
+path = "src/main.rs"
+
+[dependencies]
+# Core compositor framework
+smithay = { git = "https://github.com/Smithay/smithay", default-features = false, features = [
+    "desktop",
+    "renderer_gl",
+    "use_system_lib",
+    "backend_winit",
+    "backend_drm",
+    "backend_libinput",
+    "backend_udev",
+    "backend_session_libseat",
+    "xwayland",
+    "wayland_frontend",
+] }
+
+# Async event loop (re-exported by Smithay, but we depend on it directly for clarity)
+calloop        = { version = "0.13",  features = ["executor"] }
+calloop-wayland-source = "0.3"
+
+# Wayland server
+wayland-server = "0.31"
+wayland-protocols = { version = "0.31", features = ["server"] }
+
+# Logging
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Geometry helpers
+euclid    = "0.22"
+cgmath    = "0.18"
+
+# Low-level syscalls (fork/exec for Vicinae launcher)
+libc = "0.2"
+
+# Seat / input
+xkbcommon = { version = "0.7", features = ["wayland"] }
+
+# Error handling
+anyhow = "1"
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+opt-level     = 3

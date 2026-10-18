@@ -1,0 +1,10 @@
+/home/mehtabs/Projects/dewm/target/debug/deps/wayland_server-5e2db4248f8d8523.d: /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/lib.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/client.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/dispatch.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/display.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/global.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/socket.rs
+
+/home/mehtabs/Projects/dewm/target/debug/deps/libwayland_server-5e2db4248f8d8523.rmeta: /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/lib.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/client.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/dispatch.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/display.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/global.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/socket.rs
+
+/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/lib.rs:
+/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/client.rs:
+/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/dispatch.rs:
+/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/display.rs:
+/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/global.rs:
+/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-server-0.31.14/src/socket.rs:
