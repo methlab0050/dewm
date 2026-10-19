@@ -1,9 +1,0 @@
-/home/mehtabs/Projects/dewm/target/debug/deps/winit_common-b8a39c3ad8f89524.d: /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/lib.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/mod.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/compose.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/keymap.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/state.rs
-
-/home/mehtabs/Projects/dewm/target/debug/deps/libwinit_common-b8a39c3ad8f89524.rmeta: /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/lib.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/mod.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/compose.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/keymap.rs /home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/state.rs
-
-/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/lib.rs:
-/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/mod.rs:
-/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/compose.rs:
-/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/keymap.rs:
-/home/mehtabs/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-common-0.31.0-beta.3/src/xkb/state.rs:
