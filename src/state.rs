@@ -21,13 +21,16 @@ use smithay::{
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
-            Display, DisplayHandle, Resource,
+            Display, DisplayHandle,
         },
     },
     utils::{Logical, Point},
     wayland::{
         buffer::BufferHandler,
-        compositor::{CompositorClientState, CompositorHandler, CompositorState},
+        compositor::{
+            get_parent, is_sync_subsurface, with_states, CompositorClientState,
+            CompositorHandler, CompositorState, SurfaceAttributes,
+        },
         output::{OutputHandler, OutputManagerState},
         pointer_constraints::PointerConstraintsHandler,
         selection::{
@@ -46,7 +49,7 @@ use crate::{
     gesture::tracker::GestureTracker,
     input::keybindings::KeybindingConfig,
     overview::state::OverviewState,
-    workspace::grid::WorkspaceGrid,
+    workspace::{animation::PanAnimation, grid::WorkspaceGrid},
 };
 
 // ─── State struct ─────────────────────────────────────────────────────────────
@@ -69,6 +72,8 @@ pub struct DewmState {
     // ── dewm subsystems ───────────────────────────────────────────────────────
     /// 2D grid of workspaces — the core of dewm's layout model.
     pub workspace_grid: WorkspaceGrid,
+    /// 2D viewport pan animation engine.
+    pub pan_animation: PanAnimation,
     /// Tracks multi-touch swipe gesture phases and dispatches actions.
     pub gesture_tracker: GestureTracker,
     /// Overview mode animation and drag state.
@@ -79,6 +84,7 @@ pub struct DewmState {
     // ── Compositor loop control ───────────────────────────────────────────────
     pub loop_signal: LoopSignal,
     pub start_time:  std::time::Instant,
+    pub last_frame:  std::time::Instant,
 
     // ── Cursor ───────────────────────────────────────────────────────────────
     pub cursor_status: CursorImageStatus,
@@ -118,12 +124,74 @@ impl DewmState {
             popups,
             space:           Space::default(),
             workspace_grid:  WorkspaceGrid::new(),
+            pan_animation:   PanAnimation::new(),
             gesture_tracker: GestureTracker::new(),
             overview_state:  OverviewState::new(),
             keybindings:     KeybindingConfig::default(),
             loop_signal:     event_loop.get_signal(),
             start_time:      clock,
+            last_frame:      clock,
             cursor_status:   CursorImageStatus::default_named(),
+        }
+    }
+
+    /// Calculate the top-left origin of workspace `(row, col)` in Space coordinates.
+    pub fn workspace_origin(&self, (row, col): (i32, i32)) -> Point<i32, Logical> {
+        let size = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|o| self.space.output_geometry(o))
+            .map(|geo| geo.size)
+            .unwrap_or_else(|| (1280, 800).into());
+
+        Point::from((col * size.w, row * size.h))
+    }
+
+    /// Animate camera smoothly to adjacent workspace in `dir`, respecting expansion rules.
+    pub fn switch_workspace(&mut self, dir: crate::workspace::grid::Direction) {
+        let from_cell = self.workspace_grid.active();
+        let from_origin = self.workspace_origin(from_cell);
+
+        if let Some(to_cell) = self.workspace_grid.navigate(dir) {
+            let to_origin = self.workspace_origin(to_cell);
+            tracing::info!(?from_cell, ?to_cell, "Switching workspace");
+
+            self.pan_animation.start_transition(to_origin.to_f64());
+
+            // Transfer keyboard focus to frontmost window on target workspace
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                let target_win = self
+                    .workspace_grid
+                    .get(to_cell)
+                    .and_then(|ws| ws.windows.last())
+                    .cloned();
+
+                if let Some(win) = target_win {
+                    self.space.raise_element(&win, true);
+                    if let Some(top) = win.toplevel() {
+                        keyboard.set_focus(self, Some(top.wl_surface().clone()), serial);
+                    }
+                    self.space.elements().for_each(|w| {
+                        w.set_activated(w == &win);
+                        if let Some(t) = w.toplevel() {
+                            t.send_pending_configure();
+                        }
+                    });
+                } else {
+                    self.space.elements().for_each(|w| {
+                        w.set_activated(false);
+                        if let Some(t) = w.toplevel() {
+                            t.send_pending_configure();
+                        }
+                    });
+                    keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                }
+            }
+        } else {
+            tracing::debug!(?from_cell, ?dir, "Workspace navigation blocked (empty source)");
+            self.pan_animation.nudge_and_snap_back(from_origin.to_f64(), dir);
         }
     }
 
@@ -179,14 +247,48 @@ impl CompositorHandler for DewmState {
         // window geometry stay in sync.
         on_commit_buffer_handler::<Self>(surface);
 
+        if !is_sync_subsurface(surface) {
+            let mut root = surface.clone();
+            while let Some(parent) = get_parent(&root) {
+                root = parent;
+            }
+            let window = self
+                .space
+                .elements()
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == &root).unwrap_or(false))
+                .cloned();
+
+            if let Some(window) = window {
+                window.on_commit();
+
+                if &root == surface {
+                    let buffer_offset = with_states(surface, |states| {
+                        states
+                            .cached_state
+                            .get::<SurfaceAttributes>()
+                            .current()
+                            .buffer_delta
+                            .take()
+                    });
+
+                    if let Some(buffer_offset) = buffer_offset {
+                        if let Some(current_loc) = self.space.element_location(&window) {
+                            self.space.map_element(window.clone(), current_loc + buffer_offset, false);
+                        }
+                    }
+                }
+            }
+        }
+
         // Initial configure for toplevels
-        if let Some(window) = self
+        let window = self
             .space
             .elements()
             .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
-            .cloned()
-        {
-            let initial_configure_sent = smithay::wayland::compositor::with_states(surface, |states| {
+            .cloned();
+
+        if let Some(window) = window {
+            let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
                     .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
@@ -198,6 +300,10 @@ impl CompositorHandler for DewmState {
 
             if !initial_configure_sent {
                 window.toplevel().unwrap().send_configure();
+                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_focus(self, Some(surface.clone()), serial);
+                }
             }
         }
 
@@ -226,13 +332,27 @@ impl XdgShellHandler for DewmState {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let window = Window::new_wayland_window(surface);
+        let window = Window::new_wayland_window(surface.clone());
         // Place new windows on the currently active workspace.
         let active = self.workspace_grid.active();
-        let pos    = Point::<i32, Logical>::from((100, 100)); // TODO: smart placement
+        let ws_origin = self.workspace_origin(active);
+        let pos    = ws_origin + Point::<i32, Logical>::from((100, 100)); // TODO: smart placement
         self.space.map_element(window.clone(), pos, true);
-        self.workspace_grid.workspaces_mut()[active.0][active.1]
-            .add_window(window);
+        self.workspace_grid.active_workspace_mut().add_window(window.clone());
+
+        // Deactivate other windows and activate this one
+        self.space.elements().for_each(|w| {
+            w.set_activated(w == &window);
+            if let Some(t) = w.toplevel() {
+                t.send_pending_configure();
+            }
+        });
+
+        // Set initial keyboard focus
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, Some(surface.wl_surface().clone()), serial);
+        }
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {

@@ -99,6 +99,7 @@ impl DewmState {
                     let modifiers = keyboard.modifier_state();
 
                     if let Some((window, _)) = self.space.element_under(loc).map(|(w, l)| (w.clone(), l)) {
+                        tracing::debug!(?loc, "Clicked on window, raising and setting keyboard focus");
                         self.space.raise_element(&window, true);
                         if let Some(toplevel) = window.toplevel() {
                             keyboard.set_focus(
@@ -108,14 +109,15 @@ impl DewmState {
                             );
                         }
                         self.space.elements().for_each(|w| {
+                            w.set_activated(w == &window);
                             if let Some(t) = w.toplevel() {
                                 t.send_pending_configure();
                             }
                         });
 
-                        // Super + Left Click = Interactive Move Grab
-                        // Super + Right Click = Interactive Resize Grab
-                        if modifiers.logo {
+                        // Super + Left Click / Alt + Left Click = Interactive Move Grab
+                        // Super + Right Click / Alt + Right Click = Interactive Resize Grab
+                        if modifiers.logo || modifiers.alt {
                             let initial_window_location = self.space.element_location(&window).unwrap();
                             let start_data = GrabStartData {
                                 focus: None,
@@ -144,6 +146,7 @@ impl DewmState {
                             }
                         }
                     } else {
+                        tracing::debug!(?loc, "Clicked empty desktop, clearing focus");
                         // Clicked empty desktop
                         self.space.elements().for_each(|w| {
                             w.set_activated(false);
@@ -258,9 +261,7 @@ impl DewmState {
                             spawn_process(&cmd);
                         }
                         KeyAction::NavigateWorkspace(dir) => {
-                            if let Some(new_cell) = compositor.workspace_grid.navigate(dir) {
-                                tracing::info!(?new_cell, "Keyboard workspace navigate");
-                            }
+                            compositor.switch_workspace(dir);
                         }
                         KeyAction::ToggleOverview => {
                             compositor.overview_state.toggle();

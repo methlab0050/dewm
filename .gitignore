@@ -1,4 +1,4 @@
-# Devenv
+# devenv
 .devenv*
 devenv.local.nix
 devenv.local.yaml
@@ -8,3 +8,8 @@ devenv.local.yaml
 
 # pre-commit
 .pre-commit-config.yaml
+
+# cargo
+target
+
+.docs-cache

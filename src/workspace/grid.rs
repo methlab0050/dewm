@@ -1,22 +1,25 @@
-//! 2D workspace grid with conditional auto-expansion.
+//! 2D workspace grid backed by BTreeMap with conditional auto-expansion.
 //!
 //! # Grid Layout
 //!
-//! Workspaces are addressed by `(row, col)` coordinates:
+//! Workspaces are addressed by signed `(row, col)` coordinates in Z x Z:
 //!
 //! ```text
-//! (0,0) ←→ (0,1) ←→ (0,2)
-//!   ↕         ↕         ↕
-//! (1,0) ←→ (1,1) ←→ (1,2)
+//! (-1,-1) ←→ (-1,0) ←→ (-1,1)
+//!    ↕          ↕         ↕
+//!  (0,-1) ←→  (0,0) ←→  (0,1)
+//!    ↕          ↕         ↕
+//!  (1,-1) ←→  (1,0) ←→  (1,1)
 //! ```
 //!
 //! # Expansion Rule
 //!
 //! A swipe can only **create** a new workspace if the *source* workspace has
-//! at least one window.  An empty workspace will block swipe attempts toward
-//! non-existent neighbours, snapping the animation back.  However, swiping
-//! *toward an existing* workspace is always permitted regardless of occupancy.
+//! at least one window. An empty workspace will block swipe attempts toward
+//! non-existent neighbours in all 4 directions, snapping the animation back.
+//! However, swiping *toward an existing* workspace is always permitted regardless of occupancy.
 
+use std::collections::BTreeMap;
 use smithay::{
     desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -33,19 +36,21 @@ pub enum Direction {
     Right,
 }
 
-/// 2D grid of [`Workspace`]s.
+/// 2D grid of [`Workspace`]s backed by a [`BTreeMap`].
 pub struct WorkspaceGrid {
-    /// `workspaces[row][col]`
-    workspaces: Vec<Vec<Workspace>>,
+    /// `workspaces[(row, col)]`
+    workspaces: BTreeMap<(i32, i32), Workspace>,
     /// Currently focused cell `(row, col)`.
-    active: (usize, usize),
+    active: (i32, i32),
 }
 
 impl WorkspaceGrid {
-    /// Create a 1×1 grid with a single empty workspace.
+    /// Create a grid initialized with a single empty workspace at origin `(0, 0)`.
     pub fn new() -> Self {
+        let mut workspaces = BTreeMap::new();
+        workspaces.insert((0, 0), Workspace::new());
         Self {
-            workspaces: vec![vec![Workspace::new()]],
+            workspaces,
             active: (0, 0),
         }
     }
@@ -53,41 +58,60 @@ impl WorkspaceGrid {
     // ── Accessors ─────────────────────────────────────────────────────────────
 
     /// Currently active workspace coordinates `(row, col)`.
-    pub fn active(&self) -> (usize, usize) {
+    pub fn active(&self) -> (i32, i32) {
         self.active
     }
 
     /// Immutable reference to a workspace, if it exists.
-    pub fn get(&self, (r, c): (usize, usize)) -> Option<&Workspace> {
-        self.workspaces.get(r)?.get(c)
+    pub fn get(&self, coord: (i32, i32)) -> Option<&Workspace> {
+        self.workspaces.get(&coord)
     }
 
     /// Mutable reference to a workspace, if it exists.
-    pub fn get_mut(&mut self, (r, c): (usize, usize)) -> Option<&mut Workspace> {
-        self.workspaces.get_mut(r)?.get_mut(c)
+    pub fn get_mut(&mut self, coord: (i32, i32)) -> Option<&mut Workspace> {
+        self.workspaces.get_mut(&coord)
     }
 
-    /// Mutable access to the entire grid (used by drag-in-overview).
-    pub fn workspaces_mut(&mut self) -> &mut Vec<Vec<Workspace>> {
+    /// Read-only access to all workspaces map.
+    pub fn workspaces(&self) -> &BTreeMap<(i32, i32), Workspace> {
+        &self.workspaces
+    }
+
+    /// Mutable access to all workspaces map.
+    pub fn workspaces_mut(&mut self) -> &mut BTreeMap<(i32, i32), Workspace> {
         &mut self.workspaces
     }
 
     /// Currently active [`Workspace`].
     pub fn active_workspace(&self) -> &Workspace {
-        let (r, c) = self.active;
-        &self.workspaces[r][c]
+        self.workspaces.get(&self.active).expect("active workspace must exist")
     }
 
     /// Currently active [`Workspace`] mutably.
     pub fn active_workspace_mut(&mut self) -> &mut Workspace {
-        let (r, c) = self.active;
-        &mut self.workspaces[r][c]
+        self.workspaces.get_mut(&self.active).expect("active workspace must exist")
     }
 
-    /// Returns the grid dimensions `(rows, cols)`.
+    /// Returns the coordinate bounds `(min_r, max_r, min_c, max_c)` encompassing all allocated workspaces.
+    pub fn bounds(&self) -> (i32, i32, i32, i32) {
+        let mut min_r = self.active.0;
+        let mut max_r = self.active.0;
+        let mut min_c = self.active.1;
+        let mut max_c = self.active.1;
+        for &(r, c) in self.workspaces.keys() {
+            min_r = min_r.min(r);
+            max_r = max_r.max(r);
+            min_c = min_c.min(c);
+            max_c = max_c.max(c);
+        }
+        (min_r, max_r, min_c, max_c)
+    }
+
+    /// Returns the grid dimensions `(rows, cols)` covering the bounding box.
     pub fn dimensions(&self) -> (usize, usize) {
-        let rows = self.workspaces.len();
-        let cols = self.workspaces.first().map_or(0, |r| r.len());
+        let (min_r, max_r, min_c, max_c) = self.bounds();
+        let rows = (max_r - min_r + 1).max(1) as usize;
+        let cols = (max_c - min_c + 1).max(1) as usize;
         (rows, cols)
     }
 
@@ -105,9 +129,9 @@ impl WorkspaceGrid {
     /// | Target workspace already exists           | Always allowed      |
     /// | Target does not exist AND source occupied | Creates target      |
     /// | Target does not exist AND source empty    | **Blocked** → None  |
-    pub fn navigate(&mut self, dir: Direction) -> Option<(usize, usize)> {
+    pub fn navigate(&mut self, dir: Direction) -> Option<(i32, i32)> {
         let (r, c) = self.active;
-        let target = self.neighbour_coords(r, c, dir)?;
+        let target = Self::neighbour_coords(r, c, dir);
 
         if self.exists(target) {
             // Navigating to an existing workspace is unconditionally allowed.
@@ -115,7 +139,7 @@ impl WorkspaceGrid {
             Some(target)
         } else {
             // Only expand if the current workspace has at least one window.
-            if self.workspaces[r][c].is_occupied() {
+            if self.active_workspace().is_occupied() {
                 self.ensure_exists(target);
                 self.active = target;
                 Some(target)
@@ -128,7 +152,7 @@ impl WorkspaceGrid {
 
     /// Teleport directly to a coordinate (used by overview click / drag-drop).
     /// Creates the workspace if it does not exist.
-    pub fn teleport_to(&mut self, target: (usize, usize)) {
+    pub fn teleport_to(&mut self, target: (i32, i32)) {
         self.ensure_exists(target);
         self.active = target;
     }
@@ -136,13 +160,11 @@ impl WorkspaceGrid {
     // ── Window management ─────────────────────────────────────────────────────
 
     /// Remove a window from whichever workspace currently owns it, identified
-    /// by its `WlSurface`.  Returns the owning cell coordinates if found.
-    pub fn remove_window_by_surface(&mut self, surface: &WlSurface) -> Option<(usize, usize)> {
-        for (r, row) in self.workspaces.iter_mut().enumerate() {
-            for (c, ws) in row.iter_mut().enumerate() {
-                if ws.remove_by_surface(surface).is_some() {
-                    return Some((r, c));
-                }
+    /// by its `WlSurface`. Returns the owning cell coordinates if found.
+    pub fn remove_window_by_surface(&mut self, surface: &WlSurface) -> Option<(i32, i32)> {
+        for (&coord, ws) in self.workspaces.iter_mut() {
+            if ws.remove_by_surface(surface).is_some() {
+                return Some(coord);
             }
         }
         None
@@ -150,50 +172,37 @@ impl WorkspaceGrid {
 
     /// Move `window` from its current workspace cell to `target`.
     /// Creates `target` workspace if needed (drag-to-new-cell in overview).
-    pub fn move_window_to(&mut self, window: &Window, target: (usize, usize)) {
+    pub fn move_window_to(&mut self, window: &Window, target: (i32, i32)) {
         // Remove from current location.
-        for row in self.workspaces.iter_mut() {
-            for ws in row.iter_mut() {
-                if ws.remove_window(window) {
-                    break;
-                }
+        for ws in self.workspaces.values_mut() {
+            if ws.remove_window(window) {
+                break;
             }
         }
         self.ensure_exists(target);
-        self.workspaces[target.0][target.1].add_window(window.clone());
+        self.workspaces.get_mut(&target).unwrap().add_window(window.clone());
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// Compute the `(row, col)` of the neighbour in `dir`, or `None` if the
-    /// result would underflow (e.g. moving Up from row 0).
-    fn neighbour_coords(&self, r: usize, c: usize, dir: Direction) -> Option<(usize, usize)> {
-        Some(match dir {
-            Direction::Up    => (r.checked_sub(1)?, c),
-            Direction::Down  => (r + 1,             c),
-            Direction::Left  => (r,                 c.checked_sub(1)?),
-            Direction::Right => (r,                 c + 1),
-        })
+    /// Compute the `(row, col)` of the neighbour in `dir`.
+    pub fn neighbour_coords(r: i32, c: i32, dir: Direction) -> (i32, i32) {
+        match dir {
+            Direction::Up    => (r - 1, c),
+            Direction::Down  => (r + 1, c),
+            Direction::Left  => (r,     c - 1),
+            Direction::Right => (r,     c + 1),
+        }
     }
 
-    /// Returns `true` if `(r, c)` is within the current bounds of the grid.
-    fn exists(&self, (r, c): (usize, usize)) -> bool {
-        self.workspaces.get(r).and_then(|row| row.get(c)).is_some()
+    /// Returns `true` if `(r, c)` exists in the grid.
+    pub fn exists(&self, target: (i32, i32)) -> bool {
+        self.workspaces.contains_key(&target)
     }
 
-    /// Grow the grid until `(r, c)` is a valid index.
-    fn ensure_exists(&mut self, (r, c): (usize, usize)) {
-        // Extend rows.
-        while self.workspaces.len() <= r {
-            let cols = self.workspaces[0].len();
-            self.workspaces.push(vec![Workspace::new(); cols]);
-        }
-        // Extend columns in every row.
-        for row in self.workspaces.iter_mut() {
-            while row.len() <= c {
-                row.push(Workspace::new());
-            }
-        }
+    /// Ensure that `(r, c)` exists in the grid.
+    pub fn ensure_exists(&mut self, target: (i32, i32)) {
+        self.workspaces.entry(target).or_default();
     }
 }
 
@@ -211,43 +220,63 @@ mod tests {
     fn starts_at_origin() {
         let grid = WorkspaceGrid::new();
         assert_eq!(grid.active(), (0, 0));
+        assert!(grid.exists((0, 0)));
     }
 
     #[test]
-    fn blocked_from_empty_workspace() {
+    fn blocked_from_empty_workspace_in_all_directions() {
         let mut grid = WorkspaceGrid::new();
-        // (0,0) is empty → swiping Right should be blocked.
+        // (0,0) is empty → swiping any direction into non-existent space should be blocked.
         assert!(grid.navigate(Direction::Right).is_none());
+        assert!(grid.navigate(Direction::Left).is_none());
+        assert!(grid.navigate(Direction::Up).is_none());
+        assert!(grid.navigate(Direction::Down).is_none());
         assert_eq!(grid.active(), (0, 0), "Should not have moved");
     }
 
     #[test]
-    fn up_from_row_zero_is_none() {
+    fn expand_into_negative_quadrant() {
         let mut grid = WorkspaceGrid::new();
-        assert!(grid.navigate(Direction::Up).is_none());
-    }
-
-    #[test]
-    fn left_from_col_zero_is_none() {
-        let mut grid = WorkspaceGrid::new();
-        assert!(grid.navigate(Direction::Left).is_none());
+        // Manually place a placeholder window in (0, 0) to simulate occupancy.
+        // We'll mark it occupied by adding a window or directly testing navigate when occupied.
+        // Let's create an existing negative workspace to test navigation:
+        grid.ensure_exists((-1, -1));
+        // Direct navigation to existing negative cell always succeeds
+        grid.teleport_to((-1, -1));
+        assert_eq!(grid.active(), (-1, -1));
+        assert!(grid.exists((-1, -1)));
     }
 
     #[test]
     fn navigate_to_existing_workspace_always_allowed() {
         let mut grid = WorkspaceGrid::new();
-        // Manually expand the grid and place active at (0,1).
-        grid.ensure_exists((0, 1));
-        grid.active = (0, 1);
-        // (0,0) already exists → moving Left should succeed even though (0,1) is empty.
-        assert_eq!(grid.navigate(Direction::Left), Some((0, 0)));
+        // Create an adjacent workspace at (-1, 0)
+        grid.ensure_exists((-1, 0));
+        // Moving Up into an existing workspace succeeds even if source is empty
+        assert_eq!(grid.navigate(Direction::Up), Some((-1, 0)));
+        assert_eq!(grid.active(), (-1, 0));
     }
 
     #[test]
     fn teleport_creates_workspace() {
         let mut grid = WorkspaceGrid::new();
-        grid.teleport_to((2, 3));
-        assert_eq!(grid.active(), (2, 3));
-        assert!(grid.get((2, 3)).is_some());
+        grid.teleport_to((-2, 3));
+        assert_eq!(grid.active(), (-2, 3));
+        assert!(grid.get((-2, 3)).is_some());
+        let (min_r, max_r, min_c, max_c) = grid.bounds();
+        assert_eq!(min_r, -2);
+        assert_eq!(max_r, 0);
+        assert_eq!(min_c, 0);
+        assert_eq!(max_c, 3);
+    }
+
+    #[test]
+    fn neighbour_coords_signed() {
+        assert_eq!(WorkspaceGrid::neighbour_coords(0, 0, Direction::Left), (0, -1));
+        assert_eq!(WorkspaceGrid::neighbour_coords(0, 0, Direction::Up), (-1, 0));
+        assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Left), (-1, -2));
+        assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Up), (-2, -1));
+        assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Right), (-1, 0));
+        assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Down), (0, -1));
     }
 }

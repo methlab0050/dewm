@@ -1,124 +1,175 @@
-//! Smooth workspace pan animation driven by swipe gesture progress.
+//! Smooth 2D workspace pan animation driven by swipe gestures and keyboard navigation.
 //!
-//! [`PanAnimation`] maintains a 1-D progress value in `[-1.0, 1.0]` that
-//! represents how far the viewport has slid toward the next workspace.
-//! The renderer reads this value each frame to translate the scene.
+//! [`PanAnimation`] tracks the camera location in `Space` logical coordinates.
+//! During pan transitions, it smoothly interpolates the viewport camera between
+//! workspace origins using spring-damped exponential easing.
 
 use std::time::Duration;
+use smithay::utils::{Logical, Point};
+use crate::workspace::grid::Direction;
 
-/// Threshold of displacement (as a fraction of screen width/height) above
-/// which a swipe *commits* to switching workspaces.
-const COMMIT_THRESHOLD: f32 = 0.30;
-
-/// Minimum velocity (normalised units/second) that also commits a swipe.
-const COMMIT_VELOCITY: f32 = 0.8;
-
-/// How quickly the progress snaps back to 0.0 when cancelled.
-const SNAP_SPEED: f32 = 8.0;
-
-/// How quickly the progress animates to ±1.0 when a commit is triggered.
-const COMMIT_SPEED: f32 = 12.0;
+/// Animation speed (spring frequency coefficient).
+const ANIMATION_SPEED: f64 = 14.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PanPhase {
-    /// No animation in progress.
+    /// No animation in progress, camera is stationary at active workspace origin.
     Idle,
-    /// User is actively dragging — progress is 1-to-1 with finger position.
+    /// User is actively dragging fingers in real-time (3-finger gesture).
     Dragging,
-    /// Swipe committed: animating progress toward ±1.0.
-    Committing { target: f32 },
-    /// Swipe cancelled: animating progress back toward 0.0.
-    SnappingBack,
+    /// Animating toward target camera position.
+    Animating,
 }
 
 pub struct PanAnimation {
-    /// Current pan offset in `[-1.0, 1.0]`.
-    /// Positive = sliding toward the next workspace in the swipe direction.
-    pub progress: f32,
-    /// Instantaneous velocity, tracked for commit detection.
-    velocity: f32,
+    /// Current camera location in Space logical coordinates.
+    pub current_camera: Point<f64, Logical>,
+    /// Target camera location in Space logical coordinates.
+    pub target_camera: Point<f64, Logical>,
+    /// Camera location when current animation / drag started.
+    pub start_camera: Point<f64, Logical>,
+    /// Current phase of animation.
     pub phase: PanPhase,
+    /// Velocity of drag for momentum commit.
+    pub velocity: Point<f64, Logical>,
 }
 
 impl PanAnimation {
     pub fn new() -> Self {
         Self {
-            progress: 0.0,
-            velocity: 0.0,
-            phase:    PanPhase::Idle,
+            current_camera: Point::from((0.0, 0.0)),
+            target_camera:  Point::from((0.0, 0.0)),
+            start_camera:   Point::from((0.0, 0.0)),
+            phase:          PanPhase::Idle,
+            velocity:       Point::from((0.0, 0.0)),
         }
     }
 
-    /// Called each frame with the time since the last frame.
-    /// Returns `true` while the animation is still in progress.
-    pub fn update(&mut self, dt: Duration) -> bool {
-        let dt = dt.as_secs_f32();
-        match self.phase {
-            PanPhase::Idle | PanPhase::Dragging => false,
-
-            PanPhase::Committing { target } => {
-                let diff = target - self.progress;
-                self.progress += diff * (COMMIT_SPEED * dt).min(1.0);
-                if (self.progress - target).abs() < 0.001 {
-                    self.progress = target;
-                    self.phase    = PanPhase::Idle;
-                    return false;
-                }
-                true
-            }
-
-            PanPhase::SnappingBack => {
-                self.progress *= 1.0 - (SNAP_SPEED * dt).min(1.0);
-                if self.progress.abs() < 0.001 {
-                    self.progress = 0.0;
-                    self.phase    = PanPhase::Idle;
-                    return false;
-                }
-                true
-            }
-        }
+    /// Check if the pan animation is currently running or dragging.
+    pub fn is_active(&self) -> bool {
+        self.phase != PanPhase::Idle
     }
 
-    // ── Gesture input ─────────────────────────────────────────────────────────
-
-    /// Begin a new gesture.
-    pub fn begin(&mut self) {
-        self.progress = 0.0;
-        self.velocity = 0.0;
-        self.phase    = PanPhase::Dragging;
-    }
-
-    /// Update with a normalised delta (`dx / screen_width` or `dy / screen_height`).
-    pub fn update_drag(&mut self, delta: f32, dt: Duration) {
-        let dt = dt.as_secs_f32().max(0.001);
-        self.velocity = delta / dt;
-        self.progress = (self.progress + delta).clamp(-1.0, 1.0);
-    }
-
-    /// End gesture.  Returns `true` if the swipe should **commit** (switch workspace).
-    pub fn end(&mut self) -> bool {
-        let should_commit = self.progress.abs() > COMMIT_THRESHOLD
-            || self.velocity.abs() > COMMIT_VELOCITY;
-
-        if should_commit {
-            let target = self.progress.signum(); // +1.0 or -1.0
-            self.phase = PanPhase::Committing { target };
-        } else {
-            self.phase = PanPhase::SnappingBack;
-        }
-        should_commit
-    }
-
-    /// Cancel gesture immediately (e.g. libinput reports cancelled=true).
-    pub fn cancel(&mut self) {
-        self.phase = PanPhase::SnappingBack;
-    }
-
+    /// Check if stationary.
     pub fn is_idle(&self) -> bool {
         self.phase == PanPhase::Idle
+    }
+
+    /// Start an animated transition from current camera to target camera position.
+    pub fn start_transition(&mut self, target: Point<f64, Logical>) {
+        self.start_camera = self.current_camera;
+        self.target_camera = target;
+        self.phase = PanPhase::Animating;
+    }
+
+    /// Begin a live gesture drag from current camera position.
+    pub fn begin_gesture(&mut self) {
+        self.start_camera = self.current_camera;
+        self.velocity = Point::from((0.0, 0.0));
+        self.phase = PanPhase::Dragging;
+    }
+
+    /// Update gesture drag displacement (in pixels).
+    pub fn update_gesture_drag(&mut self, delta: Point<f64, Logical>, dt: Duration) {
+        let dt_secs = dt.as_secs_f64().max(0.001);
+        let new_cam = self.start_camera + delta;
+        let diff = new_cam - self.current_camera;
+        self.velocity = Point::from((diff.x / dt_secs, diff.y / dt_secs));
+        self.current_camera = new_cam;
+    }
+
+    /// Nudge slightly in direction `dir` and spring back to `origin` (when blocked).
+    pub fn nudge_and_snap_back(&mut self, origin: Point<f64, Logical>, dir: Direction) {
+        let nudge_offset = match dir {
+            Direction::Left  => Point::from((-40.0, 0.0)),
+            Direction::Right => Point::from((40.0, 0.0)),
+            Direction::Up    => Point::from((0.0, -40.0)),
+            Direction::Down  => Point::from((0.0, 40.0)),
+        };
+        self.current_camera = origin + nudge_offset;
+        self.start_camera = self.current_camera;
+        self.target_camera = origin;
+        self.phase = PanPhase::Animating;
+    }
+
+    /// Update animation state by delta time `dt`. Returns `true` if camera moved.
+    pub fn update(&mut self, dt: Duration) -> bool {
+        match self.phase {
+            PanPhase::Idle => false,
+            PanPhase::Dragging => true,
+            PanPhase::Animating => {
+                let dt_secs = dt.as_secs_f64();
+                let factor = 1.0 - (-ANIMATION_SPEED * dt_secs).exp();
+
+                self.current_camera.x += (self.target_camera.x - self.current_camera.x) * factor;
+                self.current_camera.y += (self.target_camera.y - self.current_camera.y) * factor;
+
+                let dist_x = (self.target_camera.x - self.current_camera.x).abs();
+                let dist_y = (self.target_camera.y - self.current_camera.y).abs();
+
+                if dist_x < 0.5 && dist_y < 0.5 {
+                    self.current_camera = self.target_camera;
+                    self.phase = PanPhase::Idle;
+                    true
+                } else {
+                    true
+                }
+            }
+        }
     }
 }
 
 impl Default for PanAnimation {
     fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_state_is_idle() {
+        let anim = PanAnimation::new();
+        assert!(!anim.is_active());
+        assert_eq!(anim.current_camera, Point::from((0.0, 0.0)));
+    }
+
+    #[test]
+    fn transition_interpolates_to_target() {
+        let mut anim = PanAnimation::new();
+        let target = Point::from((1920.0, 0.0));
+        anim.start_transition(target);
+        assert!(anim.is_active());
+
+        // Step a few frames
+        let dt = Duration::from_millis(16);
+        let mut steps = 0;
+        while anim.is_active() && steps < 120 {
+            anim.update(dt);
+            steps += 1;
+        }
+
+        assert_eq!(anim.current_camera, target);
+        assert!(!anim.is_active());
+        assert!(steps > 5, "Animation should take multiple frames");
+    }
+
+    #[test]
+    fn nudge_and_snap_back_returns_to_origin() {
+        let mut anim = PanAnimation::new();
+        let origin = Point::from((0.0, 0.0));
+        anim.nudge_and_snap_back(origin, Direction::Right);
+        assert!(anim.is_active());
+        assert_eq!(anim.current_camera, Point::from((40.0, 0.0)));
+
+        let dt = Duration::from_millis(16);
+        let mut steps = 0;
+        while anim.is_active() && steps < 120 {
+            anim.update(dt);
+            steps += 1;
+        }
+
+        assert_eq!(anim.current_camera, origin);
+        assert!(!anim.is_active());
+    }
 }

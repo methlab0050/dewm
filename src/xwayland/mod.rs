@@ -79,9 +79,10 @@ impl XwmHandler for DewmState {
         window.set_mapped(true).ok();
         let mapped = Window::new_x11_window(window);
         let active = self.workspace_grid.active();
-        let pos    = Point::<i32, Logical>::from((100, 100));
+        let ws_origin = self.workspace_origin(active);
+        let pos    = ws_origin + Point::<i32, Logical>::from((100, 100));
         self.space.map_element(mapped.clone(), pos, true);
-        self.workspace_grid.workspaces_mut()[active.0][active.1].add_window(mapped);
+        self.workspace_grid.active_workspace_mut().add_window(mapped);
         tracing::info!("Xwayland: mapped X11 window to workspace {:?}", active);
     }
 

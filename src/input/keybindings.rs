@@ -5,13 +5,14 @@
 //! | Binding                  | Action                                 |
 //! |--------------------------|----------------------------------------|
 //! | `Super + D`              | Launch Vicinae app launcher            |
-//! | `Super + Ctrl + Left`    | Navigate workspace Left                |
-//! | `Super + Ctrl + Right`   | Navigate workspace Right               |
-//! | `Super + Ctrl + Up`      | Navigate workspace Up                  |
-//! | `Super + Ctrl + Down`    | Navigate workspace Down                |
+//! | `Alt + Left / Right`     | Navigate workspace Left / Right        |
+//! | `Alt + Up / Down`        | Navigate workspace Up / Down           |
+//! | `Super + Ctrl + Arrow`   | Navigate workspace in direction        |
 //! | `Super + Tab`            | Toggle workspace overview              |
-//! | `Super + Q`              | Close focused window                   |
-//! | `Alt + F4`               | Close focused window                   |
+//! | `Super + Return`         | Launch terminal (foot)                 |
+//! | `Alt + Return`           | Launch terminal (foot)                 |
+//! | `Super + Q` / `Alt + F4` | Close focused window                   |
+//! | `Alt + Shift + Q`        | Quit compositor                        |
 
 use smithay::input::keyboard::{Keysym, ModifiersState};
 
@@ -62,6 +63,18 @@ impl ModifierMask {
         Self { super_key: false, ctrl: false, alt: true, shift: false }
     }
 
+    pub fn alt_ctrl() -> Self {
+        Self { super_key: false, ctrl: true, alt: true, shift: false }
+    }
+
+    pub fn super_shift() -> Self {
+        Self { super_key: true, ctrl: false, alt: false, shift: true }
+    }
+
+    pub fn alt_shift() -> Self {
+        Self { super_key: false, ctrl: false, alt: true, shift: true }
+    }
+
     pub fn matches(&self, mods: &ModifiersState) -> bool {
         self.super_key == mods.logo
             && self.ctrl  == mods.ctrl
@@ -82,11 +95,23 @@ impl Default for KeybindingConfig {
 
         Self {
             bindings: vec![
-                // ── App launcher ──────────────────────────────────────────────
+                // ── App launcher & terminal ───────────────────────────────────
                 b(ModifierMask::super_only(), Keysym::d,
                     SpawnProcess("vicinae".into())),
+                b(ModifierMask::super_only(), Keysym::Return,
+                    SpawnProcess("foot".into())),
+                b(ModifierMask::alt_only(), Keysym::Return,
+                    SpawnProcess("foot".into())),
 
-                // ── Workspace navigation (keyboard fallback) ──────────────────
+                // ── Workspace navigation (keyboard) ───────────────────────────
+                b(ModifierMask::alt_only(), Keysym::Left,
+                    NavigateWorkspace(Direction::Left)),
+                b(ModifierMask::alt_only(), Keysym::Right,
+                    NavigateWorkspace(Direction::Right)),
+                b(ModifierMask::alt_only(), Keysym::Up,
+                    NavigateWorkspace(Direction::Up)),
+                b(ModifierMask::alt_only(), Keysym::Down,
+                    NavigateWorkspace(Direction::Down)),
                 b(ModifierMask::super_ctrl(), Keysym::Left,
                     NavigateWorkspace(Direction::Left)),
                 b(ModifierMask::super_ctrl(), Keysym::Right,
@@ -94,6 +119,14 @@ impl Default for KeybindingConfig {
                 b(ModifierMask::super_ctrl(), Keysym::Up,
                     NavigateWorkspace(Direction::Up)),
                 b(ModifierMask::super_ctrl(), Keysym::Down,
+                    NavigateWorkspace(Direction::Down)),
+                b(ModifierMask::alt_ctrl(), Keysym::Left,
+                    NavigateWorkspace(Direction::Left)),
+                b(ModifierMask::alt_ctrl(), Keysym::Right,
+                    NavigateWorkspace(Direction::Right)),
+                b(ModifierMask::alt_ctrl(), Keysym::Up,
+                    NavigateWorkspace(Direction::Up)),
+                b(ModifierMask::alt_ctrl(), Keysym::Down,
                     NavigateWorkspace(Direction::Down)),
 
                 // ── Overview ─────────────────────────────────────────────────
@@ -103,6 +136,12 @@ impl Default for KeybindingConfig {
                 // ── Window management ─────────────────────────────────────────
                 b(ModifierMask::super_only(), Keysym::q,  CloseFocused),
                 b(ModifierMask::alt_only(),   Keysym::F4, CloseFocused),
+
+                // ── Session ───────────────────────────────────────────────────
+                b(ModifierMask::super_shift(), Keysym::q, Quit),
+                b(ModifierMask::super_shift(), Keysym::Q, Quit),
+                b(ModifierMask::alt_shift(),   Keysym::q, Quit),
+                b(ModifierMask::alt_shift(),   Keysym::Q, Quit),
             ],
         }
     }

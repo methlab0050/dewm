@@ -22,7 +22,7 @@ pub struct DragState {
     /// The window being dragged.
     pub window: Window,
     /// The workspace cell the window was originally in.
-    pub source_cell: (usize, usize),
+    pub source_cell: (i32, i32),
     /// Current cursor position in output-space pixels.
     pub cursor_pos: (f32, f32),
 }
@@ -117,15 +117,20 @@ fn hit_test_cell(
     grid: &WorkspaceGrid,
     _overview: &OverviewState,
     (ow, oh): (u32, u32),
-) -> Option<(usize, usize)> {
-    let (rows, cols) = grid.dimensions();
-    if rows == 0 || cols == 0 { return None; }
+) -> Option<(i32, i32)> {
+    let (min_r, max_r, min_c, max_c) = grid.bounds();
+    let rows = (max_r - min_r + 1).max(1);
+    let cols = (max_c - min_c + 1).max(1);
 
     let cell_w = ow as f32 / cols as f32;
     let cell_h = oh as f32 / rows as f32;
 
-    let c = (px / cell_w) as usize;
-    let r = (py / cell_h) as usize;
+    let c_idx = (px / cell_w) as i32;
+    let r_idx = (py / cell_h) as i32;
 
-    if r < rows && c < cols { Some((r, c)) } else { None }
+    if r_idx < rows && c_idx < cols {
+        Some((min_r + r_idx, min_c + c_idx))
+    } else {
+        None
+    }
 }

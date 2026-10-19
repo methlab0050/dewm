@@ -31,6 +31,15 @@
     # Test clients for the nested session
     foot
     git
+
+    # MCP servers
+    (rustPlatform.buildRustPackage {
+      pname = "rust-analyzer-mcp-server";
+      version = "0.1.0";
+      src = inputs.rust-analyzer-mcp;
+      cargoLock.lockFile = "${inputs.rust-analyzer-mcp}/Cargo.lock";
+    })
+
   ];
 
   # ─── Environment ─────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ pub struct OverviewState {
     pub phase: OverviewPhase,
 
     /// Which workspace cell the pointer is currently hovering over (if any).
-    pub hovered_cell: Option<(usize, usize)>,
+    pub hovered_cell: Option<(i32, i32)>,
 }
 
 impl OverviewState {

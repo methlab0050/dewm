@@ -91,6 +91,26 @@ impl PointerGrab<DewmState> for MoveSurfaceGrab {
 
         if !handle.current_pressed().contains(&self.start_data.button) {
             handle.unset_grab(self, data, event.serial, event.time, true);
+
+            // Re-assign window to the workspace cell that contains its center
+            if let Some(loc) = data.space.element_location(&self.window) {
+                let geo = self.window.geometry();
+                let center_x = loc.x + geo.size.w / 2;
+                let center_y = loc.y + geo.size.h / 2;
+
+                let output_size = data
+                    .space
+                    .outputs()
+                    .next()
+                    .and_then(|o| data.space.output_geometry(o))
+                    .map(|g| g.size)
+                    .unwrap_or_else(|| (1280, 800).into());
+
+                let col = center_x.div_euclid(output_size.w.max(1));
+                let row = center_y.div_euclid(output_size.h.max(1));
+
+                data.workspace_grid.move_window_to(&self.window, (row, col));
+            }
         }
     }
 

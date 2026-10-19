@@ -130,8 +130,20 @@ pub fn run() -> Result<()> {
                 WinitEvent::Input(input_event) => {
                     let size = backend.window_size();
                     state.process_input_event(input_event, (size.w as u32, size.h as u32));
+                    backend.window().request_redraw();
                 }
                 WinitEvent::Redraw => {
+                    let now = std::time::Instant::now();
+                    let dt = now.duration_since(state.last_frame);
+                    state.last_frame = now;
+
+                    let anim_updated = state.pan_animation.update(dt);
+                    if anim_updated || state.pan_animation.is_active() {
+                        let cam = state.pan_animation.current_camera.to_i32_round();
+                        state.space.map_output(&output, cam);
+                        backend.window().request_redraw();
+                    }
+
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);
 
@@ -186,7 +198,18 @@ pub fn run() -> Result<()> {
                 WinitEvent::CloseRequested => {
                     state.loop_signal.stop();
                 }
-                WinitEvent::Focus(_) => {}
+                WinitEvent::Focus(focused) => {
+                    if focused {
+                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                        if let Some(keyboard) = state.seat.get_keyboard() {
+                            if let Some(window) = state.space.elements().last().cloned() {
+                                if let Some(toplevel) = window.toplevel() {
+                                    keyboard.set_focus(state, Some(toplevel.wl_surface().clone()), serial);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         })
         .map_err(|e| anyhow::anyhow!("Failed to insert winit event source: {e}"))?;

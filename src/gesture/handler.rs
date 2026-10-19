@@ -60,13 +60,7 @@ impl DewmState {
                 let dir = direction_from_delta(delta_x, delta_y, axis);
                 if let Some(dir) = dir {
                     tracing::debug!(?dir, "3-finger workspace navigate");
-                    if let Some(new_cell) = self.workspace_grid.navigate(dir) {
-                        tracing::info!(?new_cell, "Switched workspace");
-                        // TODO: trigger PanAnimation commit + re-render
-                    } else {
-                        tracing::debug!("Workspace navigation blocked (empty source, no target)");
-                        // TODO: trigger PanAnimation snap-back
-                    }
+                    self.switch_workspace(dir);
                 }
             }
 
