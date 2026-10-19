@@ -8,20 +8,24 @@
 
 use smithay::{
     backend::input::{
-        Event, InputEvent, KeyState,
-        KeyboardKeyEvent, PointerButtonEvent, PointerMotionEvent,
-        AbsolutePositionEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputEvent,
+        KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::{
-        keyboard::{FilterResult, KeyboardHandle},
-        pointer::{ButtonEvent, MotionEvent},
+        keyboard::FilterResult,
+        pointer::{
+            AxisFrame, ButtonEvent, Focus, GrabStartData, MotionEvent,
+        },
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::SERIAL_COUNTER,
+    utils::{Point, Rectangle, SERIAL_COUNTER},
 };
 
 use crate::{
-    input::keybindings::{spawn_process, KeyAction},
+    input::{
+        grabs::{MoveSurfaceGrab, ResizeEdge, ResizeSurfaceGrab},
+        keybindings::{spawn_process, KeyAction},
+    },
     state::DewmState,
 };
 
@@ -38,17 +42,171 @@ impl DewmState {
                 self.handle_keyboard_event::<B>(event);
             }
 
-            // ── Pointer motion ────────────────────────────────────────────────
+            // ── Pointer motion (relative) ─────────────────────────────────────
             InputEvent::PointerMotion { event } => {
-                // TODO: update cursor position, update focus under pointer
+                let serial = SERIAL_COUNTER.next_serial();
+                let Some(pointer) = self.seat.get_pointer() else { return; };
+                let current_pos = pointer.current_location();
+                let delta = event.delta();
+                let pos = current_pos + Point::from((delta.x, delta.y));
+                let under = self.surface_under(pos);
+                pointer.motion(
+                    self,
+                    under,
+                    &MotionEvent {
+                        location: pos,
+                        serial,
+                        time: event.time(),
+                    },
+                );
+                pointer.frame(self);
             }
+
+            // ── Pointer motion (absolute) ─────────────────────────────────────
             InputEvent::PointerMotionAbsolute { event } => {
-                // TODO: absolute motion (e.g. from Winit mouse moves)
+                let Some(output) = self.space.outputs().next().cloned() else { return; };
+                let Some(output_geo) = self.space.output_geometry(&output) else { return; };
+                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+                let serial = SERIAL_COUNTER.next_serial();
+                let Some(pointer) = self.seat.get_pointer() else { return; };
+                let under = self.surface_under(pos);
+                pointer.motion(
+                    self,
+                    under,
+                    &MotionEvent {
+                        location: pos,
+                        serial,
+                        time: event.time(),
+                    },
+                );
+                pointer.frame(self);
             }
 
             // ── Pointer buttons ───────────────────────────────────────────────
             InputEvent::PointerButton { event } => {
-                // TODO: focus window under pointer, handle overview clicks/drags
+                let Some(pointer) = self.seat.get_pointer() else { return; };
+                let Some(keyboard) = self.seat.get_keyboard() else { return; };
+
+                let serial = SERIAL_COUNTER.next_serial();
+                let button = event.button_code();
+                let button_state = event.state();
+
+                const BTN_LEFT: u32 = 0x110;
+                const BTN_RIGHT: u32 = 0x111;
+
+                if button_state == ButtonState::Pressed && !pointer.is_grabbed() {
+                    let loc = pointer.current_location();
+                    let modifiers = keyboard.modifier_state();
+
+                    if let Some((window, _)) = self.space.element_under(loc).map(|(w, l)| (w.clone(), l)) {
+                        self.space.raise_element(&window, true);
+                        if let Some(toplevel) = window.toplevel() {
+                            keyboard.set_focus(
+                                self,
+                                Some(toplevel.wl_surface().clone()),
+                                serial,
+                            );
+                        }
+                        self.space.elements().for_each(|w| {
+                            if let Some(t) = w.toplevel() {
+                                t.send_pending_configure();
+                            }
+                        });
+
+                        // Super + Left Click = Interactive Move Grab
+                        // Super + Right Click = Interactive Resize Grab
+                        if modifiers.logo {
+                            let initial_window_location = self.space.element_location(&window).unwrap();
+                            let start_data = GrabStartData {
+                                focus: None,
+                                button,
+                                location: loc,
+                            };
+
+                            if button == BTN_LEFT {
+                                let grab = MoveSurfaceGrab {
+                                    start_data,
+                                    window,
+                                    initial_window_location,
+                                };
+                                pointer.set_grab(self, grab, serial, Focus::Clear);
+                                return;
+                            } else if button == BTN_RIGHT {
+                                let initial_window_size = window.geometry().size;
+                                let grab = ResizeSurfaceGrab::start(
+                                    start_data,
+                                    window,
+                                    ResizeEdge::BOTTOM_RIGHT,
+                                    Rectangle::new(initial_window_location, initial_window_size),
+                                );
+                                pointer.set_grab(self, grab, serial, Focus::Clear);
+                                return;
+                            }
+                        }
+                    } else {
+                        // Clicked empty desktop
+                        self.space.elements().for_each(|w| {
+                            w.set_activated(false);
+                            if let Some(t) = w.toplevel() {
+                                t.send_pending_configure();
+                            }
+                        });
+                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                    }
+                }
+
+                pointer.button(
+                    self,
+                    &ButtonEvent {
+                        button,
+                        state: button_state,
+                        serial,
+                        time: event.time(),
+                    },
+                );
+                pointer.frame(self);
+            }
+
+            // ── Pointer scrolling / axis ──────────────────────────────────────
+            InputEvent::PointerAxis { event } => {
+                let source = event.source();
+
+                let horizontal_amount = event
+                    .amount(Axis::Horizontal)
+                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
+                let vertical_amount = event
+                    .amount(Axis::Vertical)
+                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+                let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
+                let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
+
+                let mut frame = AxisFrame::new(event.time()).source(source);
+                if horizontal_amount != 0.0 {
+                    frame = frame.value(Axis::Horizontal, horizontal_amount);
+                    if let Some(discrete) = horizontal_amount_discrete {
+                        frame = frame.v120(Axis::Horizontal, discrete as i32);
+                    }
+                }
+                if vertical_amount != 0.0 {
+                    frame = frame.value(Axis::Vertical, vertical_amount);
+                    if let Some(discrete) = vertical_amount_discrete {
+                        frame = frame.v120(Axis::Vertical, discrete as i32);
+                    }
+                }
+
+                if source == AxisSource::Finger {
+                    if event.amount(Axis::Horizontal) == Some(0.0) {
+                        frame = frame.stop(Axis::Horizontal);
+                    }
+                    if event.amount(Axis::Vertical) == Some(0.0) {
+                        frame = frame.stop(Axis::Vertical);
+                    }
+                }
+
+                if let Some(pointer) = self.seat.get_pointer() {
+                    pointer.axis(self, frame);
+                    pointer.frame(self);
+                }
             }
 
             // ── Gesture events ────────────────────────────────────────────────
@@ -76,42 +234,50 @@ impl DewmState {
         B::KeyboardKeyEvent: KeyboardKeyEvent<B>,
     {
         let serial = SERIAL_COUNTER.next_serial();
-        let time   = event.time_msec();
-        let state  = event.state();
+        let time   = event.time();
+        let key_state = event.state();
 
         let keyboard = self.seat.get_keyboard().unwrap();
 
         keyboard.input::<(), _>(
             self,
             event.key_code(),
-            state,
+            key_state,
             serial,
             time,
-            |state, modifiers, handle| {
-                if matches!(state_to_key_state(state), KeyState::Released) {
+            |compositor, modifiers, handle| {
+                if matches!(key_state, KeyState::Released) {
                     return FilterResult::Forward;
                 }
 
                 let keysym = handle.modified_sym();
 
-                if let Some(action) = state.keybindings.lookup(modifiers, keysym).cloned() {
+                if let Some(action) = compositor.keybindings.lookup(modifiers, keysym).cloned() {
                     match action {
                         KeyAction::SpawnProcess(cmd) => {
                             spawn_process(&cmd);
                         }
                         KeyAction::NavigateWorkspace(dir) => {
-                            if let Some(new_cell) = state.workspace_grid.navigate(dir) {
+                            if let Some(new_cell) = compositor.workspace_grid.navigate(dir) {
                                 tracing::info!(?new_cell, "Keyboard workspace navigate");
                             }
                         }
                         KeyAction::ToggleOverview => {
-                            state.overview_state.toggle();
+                            compositor.overview_state.toggle();
                         }
                         KeyAction::CloseFocused => {
-                            // TODO: send close request to focused window
+                            if let Some(surface) = compositor.seat.get_keyboard().and_then(|k| k.current_focus()) {
+                                if let Some(window) = compositor.space.elements().find(|w| {
+                                    w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                                }) {
+                                    if let Some(toplevel) = window.toplevel() {
+                                        toplevel.send_close();
+                                    }
+                                }
+                            }
                         }
                         KeyAction::Quit => {
-                            state.loop_signal.stop();
+                            compositor.loop_signal.stop();
                         }
                     }
                     FilterResult::Intercept(())
@@ -123,8 +289,3 @@ impl DewmState {
     }
 }
 
-fn state_to_key_state(
-    state: smithay::backend::input::KeyState,
-) -> smithay::backend::input::KeyState {
-    state
-}

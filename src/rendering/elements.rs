@@ -7,24 +7,25 @@
 use smithay::{
     backend::renderer::{
         element::{
-            surface::WaylandSurfaceRenderElement,
             solid::SolidColorRenderElement,
-            RenderElement,
+            Wrap,
         },
-        ImportAll, ImportMem, Renderer,
+        ImportAll, ImportMem,
     },
     desktop::space::SpaceRenderElements,
 };
 
-smithay::render_elements! {
+smithay::backend::renderer::element::render_elements! {
     /// The complete set of render elements emitted each frame.
-    pub DewmRenderElement<R> where R: ImportAll + ImportMem;
+    pub DewmRenderElement<R, E> where
+        R: ImportAll + ImportMem;
 
-    // Standard window surface (Wayland or Xwayland).
-    Space=SpaceRenderElements<R, WaylandSurfaceRenderElement<R>>,
+    // Standard space elements (Wayland and Xwayland window surfaces).
+    Space=SpaceRenderElements<R, E>,
 
     // Solid-colour rectangles used for the overview cell hover highlight.
     SolidColor=SolidColorRenderElement,
 
-    // TODO: cursor element, drag-floating window element, workspace label
+    // Custom element wrap.
+    Custom=Wrap<E>,
 }

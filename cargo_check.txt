@@ -1,0 +1,291 @@
+    Checking calloop v0.14.5
+   Compiling rustix v0.38.44
+    Checking calloop-wayland-source v0.4.1
+    Checking winit-x11 v0.31.0-beta.3
+    Checking reis v0.7.1
+    Checking smithay-client-toolkit v0.21.1
+    Checking winit-wayland v0.31.0-beta.3
+    Checking drm v0.14.1
+    Checking winit v0.31.0-beta.3
+    Checking smithay v0.7.0 (https://github.com/Smithay/smithay#023b78b1)
+    Checking dewm v0.1.0 (/home/mehtabs/Projects/dewm)
+warning: field `started_at` is never read
+  --> src/gesture/tracker.rs:38:9
+   |
+32 |     Swiping3 {
+   |     -------- field in this variant
+...
+38 |         started_at: Instant,
+   |         ^^^^^^^^^^
+   |
+   = note: `GestureState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `started_at` is never read
+  --> src/gesture/tracker.rs:46:9
+   |
+42 |     Swiping4 {
+   |     -------- field in this variant
+...
+46 |         started_at: Instant,
+   |         ^^^^^^^^^^
+   |
+   = note: `GestureState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `is_active` is never used
+   --> src/gesture/tracker.rs:121:12
+    |
+ 57 | impl GestureTracker {
+    | ------------------- method in this implementation
+...
+121 |     pub fn is_active(&self) -> bool {
+    |            ^^^^^^^^^
+
+warning: field `delta_x` is never read
+   --> src/gesture/tracker.rs:138:17
+    |
+138 |     Overview4 { delta_x: f32, delta_y: f32, axis: SwipeAxis },
+    |     ---------   ^^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `CompletedGesture` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Quit` is never constructed
+  --> src/input/keybindings.rs:32:5
+   |
+22 | pub enum KeyAction {
+   |          --------- variant in this enum
+...
+32 |     Quit,
+   |     ^^^^
+   |
+   = note: `KeyAction` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: struct `DragState` is never constructed
+  --> src/overview/drag.rs:21:12
+   |
+21 | pub struct DragState {
+   |            ^^^^^^^^^
+
+warning: struct `OverviewDragger` is never constructed
+  --> src/overview/drag.rs:32:12
+   |
+32 | pub struct OverviewDragger {
+   |            ^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `try_begin`, `update`, `finish`, `cancel`, and `is_active` are never used
+   --> src/overview/drag.rs:37:12
+    |
+ 36 | impl OverviewDragger {
+    | -------------------- associated items in this implementation
+ 37 |     pub fn new() -> Self { Self::default() }
+    |            ^^^
+...
+ 45 |     pub fn try_begin(
+    |            ^^^^^^^^^
+...
+ 73 |     pub fn update(&mut self, cursor_pos: (f32, f32)) {
+    |            ^^^^^^
+...
+ 81 |     pub fn finish(
+    |            ^^^^^^
+...
+102 |     pub fn cancel(&mut self) {
+    |            ^^^^^^
+...
+108 |     pub fn is_active(&self) -> bool { self.active.is_some() }
+    |            ^^^^^^^^^
+
+warning: function `hit_test_cell` is never used
+   --> src/overview/drag.rs:115:4
+    |
+115 | fn hit_test_cell(
+    |    ^^^^^^^^^^^^^
+
+warning: function `overview_window_transform` is never used
+  --> src/overview/renderer.rs:30:8
+   |
+30 | pub fn overview_window_transform(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cell_highlight_rect` is never used
+  --> src/overview/renderer.rs:65:8
+   |
+65 | pub fn cell_highlight_rect(
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `ANIM_SPEED` is never used
+  --> src/overview/state.rs:13:7
+   |
+13 | const ANIM_SPEED: f32 = 6.0;
+   |       ^^^^^^^^^^
+
+warning: variant `Open` is never constructed
+  --> src/overview/state.rs:22:5
+   |
+16 | pub enum OverviewPhase {
+   |          ------------- variant in this enum
+...
+22 |     Open,
+   |     ^^^^
+   |
+   = note: `OverviewPhase` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `animation_progress` and `hovered_cell` are never read
+  --> src/overview/state.rs:29:9
+   |
+27 | pub struct OverviewState {
+   |            ------------- fields in this struct
+28 |     /// `0.0` = normal desktop, `1.0` = overview fully visible.
+29 |     pub animation_progress: f32,
+   |         ^^^^^^^^^^^^^^^^^^
+...
+33 |     pub hovered_cell: Option<(usize, usize)>,
+   |         ^^^^^^^^^^^^
+
+warning: associated items `is_visible`, `is_interactive`, `update`, `thumbnail_scale`, and `cell_position` are never used
+   --> src/overview/state.rs:67:12
+    |
+ 36 | impl OverviewState {
+    | ------------------ associated items in this implementation
+...
+ 67 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+ 71 |     pub fn is_interactive(&self) -> bool {
+    |            ^^^^^^^^^^^^^^
+...
+ 77 |     pub fn update(&mut self, dt: Duration) -> bool {
+    |            ^^^^^^
+...
+104 |     pub fn thumbnail_scale(rows: usize, cols: usize) -> f32 {
+    |            ^^^^^^^^^^^^^^^
+...
+111 |     pub fn cell_position(
+    |            ^^^^^^^^^^^^^
+
+warning: fields `output_manager_state` and `start_time` are never read
+  --> src/state.rs:53:9
+   |
+47 | pub struct DewmState {
+   |            --------- fields in this struct
+...
+53 |     pub output_manager_state: OutputManagerState,
+   |         ^^^^^^^^^^^^^^^^^^^^
+...
+73 |     pub start_time:  std::time::Instant,
+   |         ^^^^^^^^^^
+
+warning: constant `COMMIT_THRESHOLD` is never used
+  --> src/workspace/animation.rs:11:7
+   |
+11 | const COMMIT_THRESHOLD: f32 = 0.30;
+   |       ^^^^^^^^^^^^^^^^
+
+warning: constant `COMMIT_VELOCITY` is never used
+  --> src/workspace/animation.rs:14:7
+   |
+14 | const COMMIT_VELOCITY: f32 = 0.8;
+   |       ^^^^^^^^^^^^^^^
+
+warning: constant `SNAP_SPEED` is never used
+  --> src/workspace/animation.rs:17:7
+   |
+17 | const SNAP_SPEED: f32 = 8.0;
+   |       ^^^^^^^^^^
+
+warning: constant `COMMIT_SPEED` is never used
+  --> src/workspace/animation.rs:20:7
+   |
+20 | const COMMIT_SPEED: f32 = 12.0;
+   |       ^^^^^^^^^^^^
+
+warning: enum `PanPhase` is never used
+  --> src/workspace/animation.rs:23:10
+   |
+23 | pub enum PanPhase {
+   |          ^^^^^^^^
+
+warning: struct `PanAnimation` is never constructed
+  --> src/workspace/animation.rs:34:12
+   |
+34 | pub struct PanAnimation {
+   |            ^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+   --> src/workspace/animation.rs:44:12
+    |
+ 43 | impl PanAnimation {
+    | ----------------- associated items in this implementation
+ 44 |     pub fn new() -> Self {
+    |            ^^^
+...
+ 54 |     pub fn update(&mut self, dt: Duration) -> bool {
+    |            ^^^^^^
+...
+ 85 |     pub fn begin(&mut self) {
+    |            ^^^^^
+...
+ 92 |     pub fn update_drag(&mut self, delta: f32, dt: Duration) {
+    |            ^^^^^^^^^^^
+...
+ 99 |     pub fn end(&mut self) -> bool {
+    |            ^^^
+...
+113 |     pub fn cancel(&mut self) {
+    |            ^^^^^^
+...
+117 |     pub fn is_idle(&self) -> bool {
+    |            ^^^^^^^
+
+warning: multiple methods are never used
+   --> src/workspace/grid.rs:61:12
+    |
+ 44 | impl WorkspaceGrid {
+    | ------------------ methods in this implementation
+...
+ 61 |     pub fn get(&self, (r, c): (usize, usize)) -> Option<&Workspace> {
+    |            ^^^
+...
+ 66 |     pub fn get_mut(&mut self, (r, c): (usize, usize)) -> Option<&mut Workspace> {
+    |            ^^^^^^^
+...
+ 76 |     pub fn active_workspace(&self) -> &Workspace {
+    |            ^^^^^^^^^^^^^^^^
+...
+ 82 |     pub fn active_workspace_mut(&mut self) -> &mut Workspace {
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+ 88 |     pub fn dimensions(&self) -> (usize, usize) {
+    |            ^^^^^^^^^^
+...
+131 |     pub fn teleport_to(&mut self, target: (usize, usize)) {
+    |            ^^^^^^^^^^^
+...
+153 |     pub fn move_window_to(&mut self, window: &Window, target: (usize, usize)) {
+    |            ^^^^^^^^^^^^^^
+
+warning: methods `remove_window` and `windows` are never used
+  --> src/workspace/workspace.rs:45:12
+   |
+16 | impl Workspace {
+   | -------------- methods in this implementation
+...
+45 |     pub fn remove_window(&mut self, window: &Window) -> bool {
+   |            ^^^^^^^^^^^^^
+...
+55 |     pub fn windows(&self) -> impl Iterator<Item = &Window> {
+   |            ^^^^^^^
+
+warning: method `start_xwayland` is never used
+  --> src/xwayland/mod.rs:24:12
+   |
+19 | impl DewmState {
+   | -------------- method in this implementation
+...
+24 |     pub fn start_xwayland(
+   |            ^^^^^^^^^^^^^^
+
+warning: `dewm` (bin "dewm") generated 26 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.60s

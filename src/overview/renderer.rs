@@ -13,17 +13,11 @@
 //! window's transform between its full-screen position and the thumbnail slot.
 
 use smithay::{
-    backend::renderer::{
-        element::{surface::WaylandSurfaceRenderElement, RenderElement},
-        utils::CommitCounter,
-        Renderer,
-    },
     desktop::Window,
-    utils::{Logical, Physical, Point, Rectangle, Scale},
+    utils::{Logical, Physical, Point, Rectangle},
 };
 
 use crate::overview::state::OverviewState;
-use crate::workspace::grid::WorkspaceGrid;
 
 /// Compute the rendering transform for a window in overview mode.
 ///
@@ -34,7 +28,7 @@ use crate::workspace::grid::WorkspaceGrid;
 /// - At `t = 0.0`: window at its normal desktop position at scale 1.0
 /// - At `t = 1.0`: window at its thumbnail slot scaled to fit the cell
 pub fn overview_window_transform(
-    window: &Window,
+    _window: &Window,
     window_pos: Point<i32, Logical>,
     cell_row: usize,
     cell_col: usize,
@@ -78,8 +72,8 @@ pub fn cell_highlight_rect(
 ) -> Rectangle<i32, Logical> {
     let cell_w = (output_w as f32 / cols as f32) as i32;
     let cell_h = (output_h as f32 / rows as f32) as i32;
-    Rectangle::from_loc_and_size(
-        (col as i32 * cell_w, row as i32 * cell_h),
-        (cell_w, cell_h),
+    Rectangle::new(
+        (col as i32 * cell_w, row as i32 * cell_h).into(),
+        (cell_w, cell_h).into(),
     )
 }

@@ -3,6 +3,7 @@
 use smithay::{
     desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
+    wayland::seat::WaylandFocus,
 };
 
 /// A single cell in the 2D workspace grid.

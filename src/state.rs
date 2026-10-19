@@ -6,30 +6,40 @@
 //! dispatch machinery automatically.
 
 use smithay::{
-    delegate_compositor, delegate_data_device, delegate_output, delegate_seat,
-    delegate_shm, delegate_xdg_decoration, delegate_xdg_shell,
-    desktop::{Space, Window},
-    input::{Seat, SeatHandler, SeatState, pointer::CursorImageStatus},
+    backend::renderer::utils::on_commit_buffer_handler,
+    delegate_dispatch2,
+    desktop::{
+        find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Space, Window,
+        WindowSurfaceType,
+    },
+    input::{
+        pointer::{CursorImageStatus, Focus},
+        Seat, SeatHandler, SeatState,
+    },
     reexports::{
         calloop::{EventLoop, LoopSignal},
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
-            Display, DisplayHandle, protocol::wl_surface::WlSurface,
+            protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
+            Display, DisplayHandle, Resource,
         },
     },
+    utils::{Logical, Point},
     wayland::{
+        buffer::BufferHandler,
         compositor::{CompositorClientState, CompositorHandler, CompositorState},
-        output::OutputManagerState,
-        selection::data_device::{
-            ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
+        output::{OutputHandler, OutputManagerState},
+        pointer_constraints::PointerConstraintsHandler,
+        selection::{
+            data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
+            SelectionHandler,
         },
         shell::xdg::{
-            decoration::XdgDecorationHandler, XdgShellHandler, XdgShellState,
-            ToplevelSurface,
+            decoration::XdgDecorationHandler, PopupSurface, PositionerState,
+            ToplevelSurface, XdgShellHandler, XdgShellState,
         },
         shm::{ShmHandler, ShmState},
     },
-    utils::{Logical, Point},
 };
 
 use crate::{
@@ -51,6 +61,7 @@ pub struct DewmState {
     pub data_device_state:    DataDeviceState,
     pub seat_state:           SeatState<Self>,
     pub seat:                 Seat<Self>,
+    pub popups:               PopupManager,
 
     /// Spatial layout of all mapped windows.
     pub space: Space<Window>,
@@ -87,8 +98,13 @@ impl DewmState {
         let shm_state            = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state    = DataDeviceState::new::<Self>(&dh);
+        let popups               = PopupManager::default();
         let mut seat_state       = SeatState::new();
-        let seat                 = seat_state.new_wl_seat(&dh, "dewm-seat0");
+        let mut seat             = seat_state.new_wl_seat(&dh, "dewm-seat0");
+
+        // Enable keyboard and pointer capabilities on the seat
+        seat.add_keyboard(Default::default(), 200, 25).unwrap();
+        seat.add_pointer();
 
         Self {
             display_handle: dh,
@@ -99,6 +115,7 @@ impl DewmState {
             data_device_state,
             seat_state,
             seat,
+            popups,
             space:           Space::default(),
             workspace_grid:  WorkspaceGrid::new(),
             gesture_tracker: GestureTracker::new(),
@@ -108,6 +125,41 @@ impl DewmState {
             start_time:      clock,
             cursor_status:   CursorImageStatus::default_named(),
         }
+    }
+
+    /// Find the surface under the given point in Space coordinates.
+    pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+        self.space.element_under(pos).and_then(|(window, location)| {
+            window
+                .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                .map(|(s, p)| (s, (p + location).to_f64()))
+        })
+    }
+
+    /// Unconstrain a popup surface within output geometry.
+    pub fn unconstrain_popup(&self, popup: &PopupSurface) {
+        let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
+            return;
+        };
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == &root).unwrap_or(false))
+        else {
+            return;
+        };
+
+        let Some(output) = self.space.outputs().next() else { return; };
+        let Some(output_geo) = self.space.output_geometry(output) else { return; };
+        let Some(window_geo) = self.space.element_geometry(window) else { return; };
+
+        let mut target = output_geo;
+        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+        target.loc -= window_geo.loc;
+
+        popup.with_pending_state(|state| {
+            state.geometry = state.positioner.get_unconstrained_geometry(target);
+        });
     }
 }
 
@@ -125,10 +177,48 @@ impl CompositorHandler for DewmState {
     fn commit(&mut self, surface: &WlSurface) {
         // Forward commit to the desktop layer so damage tracking and
         // window geometry stay in sync.
-        smithay::desktop::on_commit_buffer_handler::<Self>(surface);
+        on_commit_buffer_handler::<Self>(surface);
+
+        // Initial configure for toplevels
+        if let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+            .cloned()
+        {
+            let initial_configure_sent = smithay::wayland::compositor::with_states(surface, |states| {
+                states
+                    .data_map
+                    .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .initial_configure_sent
+            });
+
+            if !initial_configure_sent {
+                window.toplevel().unwrap().send_configure();
+            }
+        }
+
+        // Commit popups
+        self.popups.commit(surface);
+        if let Some(popup) = self.popups.find_popup(surface) {
+            match popup {
+                PopupKind::Xdg(ref xdg) => {
+                    if !xdg.is_initial_configure_sent() {
+                        let _ = xdg.send_configure();
+                    }
+                }
+                PopupKind::InputMethod(_) => {}
+            }
+        }
+
+        // Handle resize geometry adjustments on commit
+        crate::input::grabs::handle_resize_commit(&mut self.space, surface);
     }
 }
-delegate_compositor!(DewmState);
+
 
 impl XdgShellHandler for DewmState {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -145,23 +235,102 @@ impl XdgShellHandler for DewmState {
             .add_window(window);
     }
 
-    fn new_popup(&mut self, _surface: smithay::wayland::shell::xdg::PopupSurface, _positioner: smithay::wayland::shell::xdg::PositionerState) {
-        // TODO: popup handling
+    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        self.unconstrain_popup(&surface);
+        let _ = self.popups.track_popup(PopupKind::Xdg(surface));
+    }
+
+    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+        surface.with_pending_state(|state| {
+            let geometry = positioner.get_geometry();
+            state.geometry = geometry;
+            state.positioner = positioner;
+        });
+        self.unconstrain_popup(&surface);
+        surface.send_repositioned(token);
+    }
+
+    fn move_request(
+        &mut self,
+        surface: ToplevelSurface,
+        seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
+        serial: smithay::utils::Serial,
+    ) {
+        let seat = Seat::from_resource(&seat).unwrap();
+        let wl_surface = surface.wl_surface();
+
+        if let Some(start_data) = crate::input::grabs::check_grab(&seat, wl_surface, serial) {
+            let pointer = seat.get_pointer().unwrap();
+
+            let Some(window) = self
+                .space
+                .elements()
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
+                .cloned()
+            else { return; };
+
+            let initial_window_location = self.space.element_location(&window).unwrap();
+
+            let grab = crate::input::grabs::MoveSurfaceGrab {
+                start_data,
+                window,
+                initial_window_location,
+            };
+
+            pointer.set_grab(self, grab, serial, Focus::Clear);
+        }
+    }
+
+    fn resize_request(
+        &mut self,
+        surface: ToplevelSurface,
+        seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
+        serial: smithay::utils::Serial,
+        edges: smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
+    ) {
+        let seat = Seat::from_resource(&seat).unwrap();
+        let wl_surface = surface.wl_surface();
+
+        if let Some(start_data) = crate::input::grabs::check_grab(&seat, wl_surface, serial) {
+            let pointer = seat.get_pointer().unwrap();
+
+            let Some(window) = self
+                .space
+                .elements()
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
+                .cloned()
+            else { return; };
+
+            let initial_window_location = self.space.element_location(&window).unwrap();
+            let initial_window_size = window.geometry().size;
+
+            surface.with_pending_state(|state| {
+                state.states.set(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Resizing);
+            });
+            surface.send_pending_configure();
+
+            let grab = crate::input::grabs::ResizeSurfaceGrab::start(
+                start_data,
+                window,
+                edges.into(),
+                smithay::utils::Rectangle::new(initial_window_location, initial_window_size),
+            );
+
+            pointer.set_grab(self, grab, serial, Focus::Clear);
+        }
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.workspace_grid.remove_window_by_surface(surface.wl_surface());
     }
 
-    fn grab(&mut self, _surface: smithay::wayland::shell::xdg::PopupSurface, _seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat, _serial: smithay::utils::Serial) {
-        // TODO
+    fn grab(&mut self, _surface: PopupSurface, _seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat, _serial: smithay::utils::Serial) {
+        // TODO: popup grabs
     }
 }
-delegate_xdg_shell!(DewmState);
 
 impl XdgDecorationHandler for DewmState {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        use smithay::wayland::shell::xdg::decoration::XdgToplevelDecorationState;
         // Tell the client to draw its own decorations (CSD).
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(
@@ -171,7 +340,7 @@ impl XdgDecorationHandler for DewmState {
         toplevel.send_configure();
     }
 
-    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode) {
+    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode) {
         use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
         // Always honour CSD — never switch to SSD.
         toplevel.with_pending_state(|state| {
@@ -185,7 +354,6 @@ impl XdgDecorationHandler for DewmState {
         toplevel.send_configure();
     }
 }
-delegate_xdg_decoration!(DewmState);
 
 impl SeatHandler for DewmState {
     type KeyboardFocus = WlSurface;
@@ -204,21 +372,32 @@ impl SeatHandler for DewmState {
         // TODO: update window stacking order / visual focus ring
     }
 }
-delegate_seat!(DewmState);
+
+impl PointerConstraintsHandler for DewmState {}
 
 impl ShmHandler for DewmState {
     fn shm_state(&self) -> &ShmState { &self.shm_state }
 }
-delegate_shm!(DewmState);
+
+impl BufferHandler for DewmState {
+    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+}
+
+impl SelectionHandler for DewmState {
+    type SelectionUserData = ();
+}
+
+impl WaylandDndGrabHandler for DewmState {}
 
 impl DataDeviceHandler for DewmState {
-    fn data_device_state(&self) -> &DataDeviceState { &self.data_device_state }
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
+    }
 }
-impl ClientDndGrabHandler for DewmState {}
-impl ServerDndGrabHandler for DewmState {}
-delegate_data_device!(DewmState);
 
-delegate_output!(DewmState);
+impl OutputHandler for DewmState {}
+
+delegate_dispatch2!(DewmState);
 
 // ─── Per-client data ──────────────────────────────────────────────────────────
 

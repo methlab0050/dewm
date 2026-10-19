@@ -13,7 +13,7 @@
 //! | `Super + Q`              | Close focused window                   |
 //! | `Alt + F4`               | Close focused window                   |
 
-use smithay::input::keyboard::{KeyboardHandler, Keysym, ModifiersState};
+use smithay::input::keyboard::{Keysym, ModifiersState};
 
 use crate::workspace::grid::Direction;
 

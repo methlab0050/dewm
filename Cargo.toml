@@ -24,9 +24,8 @@ smithay = { git = "https://github.com/Smithay/smithay", default-features = false
     "wayland_frontend",
 ] }
 
-# Async event loop (re-exported by Smithay, but we depend on it directly for clarity)
-calloop        = { version = "0.13",  features = ["executor"] }
-calloop-wayland-source = "0.3"
+# Async event loop (re-exported by Smithay)
+calloop        = { version = "0.14",  features = ["executor"] }
 
 # Wayland server
 wayland-server = "0.31"
@@ -48,6 +47,9 @@ xkbcommon = { version = "0.7", features = ["wayland"] }
 
 # Error handling
 anyhow = "1"
+
+# Bitflags for resize edges
+bitflags = "2"
 
 [profile.release]
 lto           = "thin"

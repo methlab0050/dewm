@@ -6,7 +6,6 @@
 //! thumbnails, and gesture navigation.
 
 use smithay::{
-    delegate_xwayland_shell,
     desktop::Window,
     utils::{Logical, Point},
     xwayland::{
@@ -25,31 +24,35 @@ impl DewmState {
     pub fn start_xwayland(
         &mut self,
         handle: &smithay::reexports::calloop::LoopHandle<'_, DewmState>,
-    ) -> anyhow::Result<XWayland> {
-        let (xwayland, channel) = XWayland::new(&self.display_handle);
+    ) -> anyhow::Result<()> {
+        let (xwayland, _client) = XWayland::spawn(
+            &self.display_handle,
+            None,
+            std::iter::empty::<(String, String)>(),
+            std::iter::empty::<String>(),
+            true,
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+            |_| (),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to spawn Xwayland: {e}"))?;
 
         handle
-            .insert_source(channel, move |event, _, state| match event {
+            .insert_source(xwayland, move |event, _, _state| match event {
                 XWaylandEvent::Ready {
-                    x11_socket,
+                    x11_socket: _,
                     display_number,
-                    connection: _,
-                    client: _,
                 } => {
                     tracing::info!(display_number, "Xwayland ready");
                     // TODO: initialise XWm here once we have a way to store it in state
                 }
-                XWaylandEvent::Exited => {
-                    tracing::warn!("Xwayland exited");
+                XWaylandEvent::Error => {
+                    tracing::warn!("Xwayland exited with error");
                 }
             })
             .map_err(|e| anyhow::anyhow!("Failed to register Xwayland source: {e}"))?;
 
-        xwayland
-            .start(handle.clone(), None, std::iter::empty::<(&str, &str)>(), true, |_| {})
-            .map_err(|e| anyhow::anyhow!("Failed to start Xwayland: {e}"))?;
-
-        Ok(xwayland)
+        Ok(())
     }
 }
 
@@ -66,7 +69,7 @@ impl XwmHandler for DewmState {
         // X11 windows start unmapped; we wait for map_window_request to place them.
     }
 
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {
         // Override-redirect windows (menus, tooltips) don't go through map_window_request.
         // TODO: display them as floating popups.
         tracing::debug!("Xwayland: override-redirect window");
@@ -96,7 +99,7 @@ impl XwmHandler for DewmState {
         }
     }
 
-    fn configure_request(&mut self, _xwm: XwmId, window: X11Surface, x: Option<i32>, y: Option<i32>, w: Option<u32>, h: Option<u32>, _reorder: Option<Reorder>) {
+    fn configure_request(&mut self, _xwm: XwmId, window: X11Surface, _x: Option<i32>, _y: Option<i32>, w: Option<u32>, h: Option<u32>, _reorder: Option<Reorder>) {
         // Honour resize requests; ignore position (we manage placement).
         let mut geo = window.geometry();
         if let Some(w) = w { geo.size.w = w as i32; }

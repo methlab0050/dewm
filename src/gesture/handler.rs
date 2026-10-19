@@ -5,14 +5,14 @@
 //! navigation or overview mode toggles.
 
 use smithay::backend::input::{
-    GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, InputEvent,
+    GestureBeginEvent, GestureEndEvent,
+    GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
 };
 
 use crate::{
-    gesture::tracker::{CompletedGesture, GestureTracker, SwipeAxis},
-    overview::state::OverviewState,
+    gesture::tracker::{CompletedGesture, SwipeAxis},
     state::DewmState,
-    workspace::grid::{Direction, WorkspaceGrid},
+    workspace::grid::Direction,
 };
 
 impl DewmState {
