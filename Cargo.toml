@@ -17,6 +17,7 @@ smithay = { git = "https://github.com/Smithay/smithay", default-features = false
     "use_system_lib",
     "backend_winit",
     "backend_drm",
+    "backend_gbm",
     "backend_libinput",
     "backend_udev",
     "backend_session_libseat",

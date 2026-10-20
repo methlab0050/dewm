@@ -18,6 +18,7 @@
 
     # OpenGL / rendering
     mesa
+    libgbm
     libGL
     egl-wayland
 
@@ -59,6 +60,18 @@
     wayland
     libxkbcommon
     mesa
+    libgbm
+    libGL
+    libinput
+    udev
+    seatd
+  ]);
+
+  env.LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [
+    wayland
+    libxkbcommon
+    mesa
+    libgbm
     libGL
     libinput
     udev
@@ -72,6 +85,7 @@
     libxkbcommon
     libinput
     mesa
+    libgbm
     udev
   ]);
 
