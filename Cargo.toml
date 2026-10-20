@@ -52,6 +52,9 @@ anyhow = "1"
 # Bitflags for resize edges
 bitflags = "2"
 
+[build-dependencies]
+pkg-config = "0.3"
+
 [profile.release]
 lto           = "thin"
 codegen-units = 1
