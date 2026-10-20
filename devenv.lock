@@ -57,22 +57,22 @@
       "inputs": {
         "devenv": "devenv",
         "nixpkgs": "nixpkgs",
-        "rust-analyzer-mcp": "rust-analyzer-mcp"
+        "rust-mcp": "rust-mcp"
       }
     },
-    "rust-analyzer-mcp": {
+    "rust-mcp": {
       "flake": false,
       "locked": {
-        "lastModified": 1749312174,
-        "narHash": "sha256-HTvCHai9+A4ZB8sNG7dVvIg4DybMb/SvREgQwvCw9gY=",
-        "owner": "ciresnave",
-        "repo": "rust-analyzer-mcp-server",
-        "rev": "04dc6e07ed7c96889a0aec48a2f3a4362c141290",
+        "lastModified": 1752399581,
+        "narHash": "sha256-CEU1GZ9LM4ZWqLWtuCjgKOfk3fq5IQhw2e6beVgMf6I=",
+        "owner": "dexwritescode",
+        "repo": "rust-mcp",
+        "rev": "f03b2b0db8995d327b10ba292333c8259f8979aa",
         "type": "github"
       },
       "original": {
-        "owner": "ciresnave",
-        "repo": "rust-analyzer-mcp-server",
+        "owner": "dexwritescode",
+        "repo": "rust-mcp",
         "type": "github"
       }
     }

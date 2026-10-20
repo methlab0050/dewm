@@ -12,6 +12,8 @@
 //! | `Super + Return`         | Launch terminal (foot)                 |
 //! | `Alt + Return`           | Launch terminal (foot)                 |
 //! | `Super + Q` / `Alt + F4` | Close focused window                   |
+//! | `Alt + F` / `Super + F`  | Toggle focused window fullscreen       |
+//! | `Alt + M` / `Super + M`  | Toggle focused window maximized        |
 //! | `Alt + Shift + Q`        | Quit compositor                        |
 
 use smithay::input::keyboard::{Keysym, ModifiersState};
@@ -29,6 +31,10 @@ pub enum KeyAction {
     ToggleOverview,
     /// Close the currently focused window.
     CloseFocused,
+    /// Toggle fullscreen mode for the focused window.
+    ToggleFullscreen,
+    /// Toggle maximized mode for the focused window.
+    ToggleMaximize,
     /// Quit the compositor.
     Quit,
 }
@@ -136,6 +142,11 @@ impl Default for KeybindingConfig {
                 // ── Window management ─────────────────────────────────────────
                 b(ModifierMask::super_only(), Keysym::q,  CloseFocused),
                 b(ModifierMask::alt_only(),   Keysym::F4, CloseFocused),
+                b(ModifierMask::alt_only(),   Keysym::f,  ToggleFullscreen),
+                b(ModifierMask::super_only(), Keysym::f,  ToggleFullscreen),
+                b(ModifierMask::alt_only(),   Keysym::F11, ToggleFullscreen),
+                b(ModifierMask::alt_only(),   Keysym::m,  ToggleMaximize),
+                b(ModifierMask::super_only(), Keysym::m,  ToggleMaximize),
 
                 // ── Session ───────────────────────────────────────────────────
                 b(ModifierMask::super_shift(), Keysym::q, Quit),

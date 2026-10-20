@@ -18,13 +18,14 @@ use smithay::{
     },
     reexports::{
         calloop::{EventLoop, LoopSignal},
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
             Display, DisplayHandle,
         },
     },
-    utils::{Logical, Point},
+    utils::{Logical, Point, Rectangle},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -229,7 +230,35 @@ impl DewmState {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });
     }
+
+    /// Toggle fullscreen mode for the given toplevel surface.
+    pub fn toggle_fullscreen(&mut self, surface: &ToplevelSurface) {
+        let is_fullscreen = surface.with_pending_state(|state| {
+            state.states.contains(xdg_toplevel::State::Fullscreen)
+        });
+        if is_fullscreen {
+            self.unfullscreen_request(surface.clone());
+        } else {
+            self.fullscreen_request(surface.clone(), None);
+        }
+    }
+
+    /// Toggle maximized mode for the given toplevel surface.
+    pub fn toggle_maximize(&mut self, surface: &ToplevelSurface) {
+        let is_maximized = surface.with_pending_state(|state| {
+            state.states.contains(xdg_toplevel::State::Maximized)
+        });
+        if is_maximized {
+            self.unmaximize_request(surface.clone());
+        } else {
+            self.maximize_request(surface.clone());
+        }
+    }
 }
+
+/// Stores pre-maximized/pre-fullscreen window geometry for restoration.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct SavedGeometry(pub Option<Rectangle<i32, Logical>>);
 
 // ─── Smithay trait implementations ───────────────────────────────────────────
 
@@ -446,6 +475,173 @@ impl XdgShellHandler for DewmState {
 
     fn grab(&mut self, _surface: PopupSurface, _seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat, _serial: smithay::utils::Serial) {
         // TODO: popup grabs
+    }
+
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface.wl_surface()).unwrap_or(false))
+            .cloned()
+        else {
+            return;
+        };
+
+        let Some(output) = self.space.outputs().next().cloned() else { return; };
+        let Some(output_geo) = self.space.output_geometry(&output) else { return; };
+
+        let window_loc = self.space.element_location(&window).unwrap_or_default();
+        let window_geo = window.geometry();
+        let current_rect = Rectangle::new(window_loc, window_geo.size);
+
+        // Only save current_rect as floating geometry if we aren't already maximized
+        let is_already_maximized = surface.with_pending_state(|state| {
+            state.states.contains(xdg_toplevel::State::Maximized)
+        });
+
+        if !is_already_maximized {
+            with_states(surface.wl_surface(), |states| {
+                states.data_map.insert_if_missing(std::cell::RefCell::<SavedGeometry>::default);
+                let mut guard = states.data_map.get::<std::cell::RefCell<SavedGeometry>>().unwrap().borrow_mut();
+                if guard.0.is_none() {
+                    guard.0 = Some(current_rect);
+                }
+            });
+        }
+
+        surface.with_pending_state(|state| {
+            state.states.set(xdg_toplevel::State::Maximized);
+            state.size = Some(output_geo.size);
+        });
+
+        let active = self.workspace_grid.active();
+        let ws_origin = self.workspace_origin(active);
+        self.space.map_element(window.clone(), ws_origin, true);
+        surface.send_pending_configure();
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface.wl_surface()).unwrap_or(false))
+            .cloned()
+        else {
+            return;
+        };
+
+        let is_fullscreen = surface.with_pending_state(|state| {
+            state.states.unset(xdg_toplevel::State::Maximized);
+            state.states.contains(xdg_toplevel::State::Fullscreen)
+        });
+
+        if !is_fullscreen {
+            let restored = with_states(surface.wl_surface(), |states| {
+                states.data_map.get::<std::cell::RefCell<SavedGeometry>>().and_then(|g| g.borrow_mut().0.take())
+            });
+
+            if let Some(rect) = restored {
+                surface.with_pending_state(|state| {
+                    state.size = Some(rect.size);
+                });
+                self.space.map_element(window.clone(), rect.loc, true);
+            } else {
+                surface.with_pending_state(|state| {
+                    state.size = None;
+                });
+            }
+        }
+        surface.send_pending_configure();
+    }
+
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>) {
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface.wl_surface()).unwrap_or(false))
+            .cloned()
+        else {
+            return;
+        };
+
+        let Some(output) = self.space.outputs().next().cloned() else { return; };
+        let Some(output_geo) = self.space.output_geometry(&output) else { return; };
+
+        let window_loc = self.space.element_location(&window).unwrap_or_default();
+        let window_geo = window.geometry();
+        let current_rect = Rectangle::new(window_loc, window_geo.size);
+
+        // If window is already maximized, do not overwrite the saved floating geometry!
+        let was_already_maximized = surface.with_pending_state(|state| {
+            state.states.contains(xdg_toplevel::State::Maximized)
+        });
+
+        if !was_already_maximized {
+            with_states(surface.wl_surface(), |states| {
+                states.data_map.insert_if_missing(std::cell::RefCell::<SavedGeometry>::default);
+                let mut guard = states.data_map.get::<std::cell::RefCell<SavedGeometry>>().unwrap().borrow_mut();
+                if guard.0.is_none() {
+                    guard.0 = Some(current_rect);
+                }
+            });
+        }
+
+        surface.with_pending_state(|state| {
+            state.states.set(xdg_toplevel::State::Fullscreen);
+            state.size = Some(output_geo.size);
+        });
+
+        let active = self.workspace_grid.active();
+        let ws_origin = self.workspace_origin(active);
+        self.space.map_element(window.clone(), ws_origin, true);
+        surface.send_pending_configure();
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface.wl_surface()).unwrap_or(false))
+            .cloned()
+        else {
+            return;
+        };
+
+        // Unset Fullscreen and check if Maximized was and remains active
+        let is_maximized = surface.with_pending_state(|state| {
+            state.states.unset(xdg_toplevel::State::Fullscreen);
+            state.states.contains(xdg_toplevel::State::Maximized)
+        });
+
+        if is_maximized {
+            // Restore maximized layout (fills active workspace) and preserve saved floating geometry!
+            let Some(output) = self.space.outputs().next().cloned() else { return; };
+            let Some(output_geo) = self.space.output_geometry(&output) else { return; };
+            let active = self.workspace_grid.active();
+            let ws_origin = self.workspace_origin(active);
+
+            surface.with_pending_state(|state| {
+                state.size = Some(output_geo.size);
+            });
+            self.space.map_element(window.clone(), ws_origin, true);
+        } else {
+            // Restore saved floating geometry
+            let restored = with_states(surface.wl_surface(), |states| {
+                states.data_map.get::<std::cell::RefCell<SavedGeometry>>().and_then(|g| g.borrow_mut().0.take())
+            });
+
+            if let Some(rect) = restored {
+                surface.with_pending_state(|state| {
+                    state.size = Some(rect.size);
+                });
+                self.space.map_element(window.clone(), rect.loc, true);
+            } else {
+                surface.with_pending_state(|state| {
+                    state.size = None;
+                });
+            }
+        }
+        surface.send_pending_configure();
     }
 }
 

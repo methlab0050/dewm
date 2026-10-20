@@ -277,6 +277,44 @@ impl DewmState {
                                 }
                             }
                         }
+                        KeyAction::ToggleFullscreen => {
+                            let toplevel = compositor
+                                .seat
+                                .get_keyboard()
+                                .and_then(|k| k.current_focus())
+                                .and_then(|surface| {
+                                    compositor
+                                        .space
+                                        .elements()
+                                        .find(|w| {
+                                            w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                                        })
+                                        .and_then(|w| w.toplevel().cloned())
+                                });
+
+                            if let Some(toplevel) = toplevel {
+                                compositor.toggle_fullscreen(&toplevel);
+                            }
+                        }
+                        KeyAction::ToggleMaximize => {
+                            let toplevel = compositor
+                                .seat
+                                .get_keyboard()
+                                .and_then(|k| k.current_focus())
+                                .and_then(|surface| {
+                                    compositor
+                                        .space
+                                        .elements()
+                                        .find(|w| {
+                                            w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                                        })
+                                        .and_then(|w| w.toplevel().cloned())
+                                });
+
+                            if let Some(toplevel) = toplevel {
+                                compositor.toggle_maximize(&toplevel);
+                            }
+                        }
                         KeyAction::Quit => {
                             compositor.loop_signal.stop();
                         }

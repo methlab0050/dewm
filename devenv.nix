@@ -32,14 +32,23 @@
     foot
     git
 
-    # MCP servers
-    (rustPlatform.buildRustPackage {
-      pname = "rust-analyzer-mcp-server";
-      version = "0.1.0";
-      src = inputs.rust-analyzer-mcp;
-      cargoLock.lockFile = "${inputs.rust-analyzer-mcp}/Cargo.lock";
-    })
-
+            (rustPlatform.buildRustPackage {
+          pname = "rustmcp";
+          version = "1.0.0";
+          src = inputs.rust-mcp;
+          cargoLock.lockFile = "${inputs.rust-mcp}/Cargo.lock";
+          nativeBuildInputs = [ makeWrapper ];
+          postPatch = ''
+            substituteInPlace src/main.rs \
+              --replace-fail 'println!("Starting Rust MCP Server");' 'eprintln!("Starting Rust MCP Server");' \
+              --replace-fail 'println!("Server running on stdio transport...");' 'eprintln!("Server running on stdio transport...");'
+          '';
+          postInstall = ''
+            wrapProgram $out/bin/rustmcp \
+              --set RUST_ANALYZER_PATH "${rust-analyzer}/bin/rust-analyzer" \
+              --prefix PATH : ${lib.makeBinPath [ rust-analyzer ]}
+          '';
+        })
   ];
 
   # ─── Environment ─────────────────────────────────────────────────────────────
@@ -71,16 +80,18 @@
 
   # ─── Shell greeting ──────────────────────────────────────────────────────────
   enterShell = ''
-    echo ""
-    echo "  ╔═══════════════════════════════════════════════╗"
-    echo "  ║   dewm dev environment ready                  ║"
-    echo "  ╠═══════════════════════════════════════════════╣"
-    echo "  ║  Build:         cargo build                   ║"
-    echo "  ║  Run (nested):  cargo run -- --backend winit  ║"
-    echo "  ║  Run (native):  cargo run -- --backend udev   ║"
-    echo "  ║  Lint:          cargo clippy                  ║"
-    echo "  ╚═══════════════════════════════════════════════╝"
-    echo ""
+    if [ -t 1 ]; then
+      echo ""
+      echo "  ╔═══════════════════════════════════════════════╗"
+      echo "  ║   dewm dev environment ready                  ║"
+      echo "  ╠═══════════════════════════════════════════════╣"
+      echo "  ║  Build:         cargo build                   ║"
+      echo "  ║  Run (nested):  cargo run -- --backend winit  ║"
+      echo "  ║  Run (native):  cargo run -- --backend udev   ║"
+      echo "  ║  Lint:          cargo clippy                  ║"
+      echo "  ╚═══════════════════════════════════════════════╝"
+      echo ""
+    fi
   '';
 
   # ─── Tests ───────────────────────────────────────────────────────────────────
