@@ -71,6 +71,7 @@ impl WorkspaceGrid {
     }
 
     /// Mutable reference to a workspace, if it exists.
+    #[allow(dead_code)]
     pub fn get_mut(&mut self, coord: (i32, i32)) -> Option<&mut Workspace> {
         self.workspaces.get_mut(&coord)
     }
@@ -81,6 +82,7 @@ impl WorkspaceGrid {
     }
 
     /// Mutable access to all workspaces map.
+    #[allow(dead_code)]
     pub fn workspaces_mut(&mut self) -> &mut BTreeMap<(i32, i32), Workspace> {
         &mut self.workspaces
     }
@@ -96,6 +98,7 @@ impl WorkspaceGrid {
     }
 
     /// Returns the coordinate bounds `(min_r, max_r, min_c, max_c)` encompassing all allocated workspaces.
+    #[allow(dead_code)]
     pub fn bounds(&self) -> (i32, i32, i32, i32) {
         let mut min_r = self.active.0;
         let mut max_r = self.active.0;
@@ -111,6 +114,7 @@ impl WorkspaceGrid {
     }
 
     /// Returns the grid dimensions `(rows, cols)` covering the bounding box.
+    #[allow(dead_code)]
     pub fn dimensions(&self) -> (usize, usize) {
         let (min_r, max_r, min_c, max_c) = self.bounds();
         let rows = (max_r - min_r + 1).max(1) as usize;

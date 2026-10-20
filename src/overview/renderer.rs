@@ -167,9 +167,15 @@ where
     };
 
     let progress = state.overview_state.animation_progress.clamp(0.0, 1.0);
+    let screen_rect = Rectangle::from_size(output_size.into());
 
     // 1. Render workspace cell borders
     for layout in &layouts {
+        // Frustum culling: skip workspaces outside the viewport
+        if !screen_rect.overlaps(layout.rect) {
+            continue;
+        }
+
         let is_active = layout.coord == active_cell;
         let is_hovered = Some(layout.coord) == hovered_cell;
 
@@ -213,6 +219,11 @@ where
     };
 
     for layout in &layouts {
+        // Frustum culling: skip window thumbnails for workspaces outside the viewport
+        if !screen_rect.overlaps(layout.rect) {
+            continue;
+        }
+
         let Some(ws) = state.workspace_grid.get(layout.coord) else {
             continue;
         };

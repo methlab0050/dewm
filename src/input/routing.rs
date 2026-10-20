@@ -58,14 +58,18 @@ impl DewmState {
                         let out_pos = pos - geo_loc;
                         let cursor_pos = (out_pos.x as f32, out_pos.y as f32);
                         let active = self.workspace_grid.active();
-                        self.overview_state.hovered_cell = crate::overview::drag::hit_test_cell(
-                            cursor_pos,
-                            &self.workspace_grid,
-                            active,
-                            out_size,
-                            self.overview_state.camera_pos,
-                            self.overview_state.animation_progress,
-                        );
+                        if self.overview_dragger.is_dragging() {
+                            self.overview_state.hovered_cell = crate::overview::drag::hit_test_cell(
+                                cursor_pos,
+                                &self.workspace_grid,
+                                active,
+                                out_size,
+                                self.overview_state.camera_pos,
+                                self.overview_state.animation_progress,
+                            );
+                        } else {
+                            self.overview_state.hovered_cell = None;
+                        }
                         self.overview_dragger.update(cursor_pos);
                     }
                     None
@@ -98,14 +102,18 @@ impl DewmState {
                     let cursor_pos = (out_pos.x as f32, out_pos.y as f32);
                     let out_size = (output_geo.size.w, output_geo.size.h);
                     let active = self.workspace_grid.active();
-                    self.overview_state.hovered_cell = crate::overview::drag::hit_test_cell(
-                        cursor_pos,
-                        &self.workspace_grid,
-                        active,
-                        out_size,
-                        self.overview_state.camera_pos,
-                        self.overview_state.animation_progress,
-                    );
+                    if self.overview_dragger.is_dragging() {
+                        self.overview_state.hovered_cell = crate::overview::drag::hit_test_cell(
+                            cursor_pos,
+                            &self.workspace_grid,
+                            active,
+                            out_size,
+                            self.overview_state.camera_pos,
+                            self.overview_state.animation_progress,
+                        );
+                    } else {
+                        self.overview_state.hovered_cell = None;
+                    }
                     self.overview_dragger.update(cursor_pos);
                     None
                 } else {

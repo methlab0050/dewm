@@ -21,6 +21,7 @@ impl DewmState {
     ///
     /// Call this once during compositor startup after the Wayland display is
     /// ready.  The returned `XWayland` handle must be kept alive.
+    #[allow(dead_code)]
     pub fn start_xwayland(
         &mut self,
         handle: &smithay::reexports::calloop::LoopHandle<'_, DewmState>,

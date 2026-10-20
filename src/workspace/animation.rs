@@ -16,6 +16,7 @@ pub enum PanPhase {
     /// No animation in progress, camera is stationary at active workspace origin.
     Idle,
     /// User is actively dragging fingers in real-time (3-finger gesture).
+    #[allow(dead_code)]
     Dragging,
     /// Animating toward target camera position.
     Animating,
@@ -31,6 +32,7 @@ pub struct PanAnimation {
     /// Current phase of animation.
     pub phase: PanPhase,
     /// Velocity of drag for momentum commit.
+    #[allow(dead_code)]
     pub velocity: Point<f64, Logical>,
 }
 
@@ -51,6 +53,7 @@ impl PanAnimation {
     }
 
     /// Check if stationary.
+    #[allow(dead_code)]
     pub fn is_idle(&self) -> bool {
         self.phase == PanPhase::Idle
     }
@@ -63,6 +66,7 @@ impl PanAnimation {
     }
 
     /// Begin a live gesture drag from current camera position.
+    #[allow(dead_code)]
     pub fn begin_gesture(&mut self) {
         self.start_camera = self.current_camera;
         self.velocity = Point::from((0.0, 0.0));
@@ -70,6 +74,7 @@ impl PanAnimation {
     }
 
     /// Update gesture drag displacement (in pixels).
+    #[allow(dead_code)]
     pub fn update_gesture_drag(&mut self, delta: Point<f64, Logical>, dt: Duration) {
         let dt_secs = dt.as_secs_f64().max(0.001);
         let new_cam = self.start_camera + delta;

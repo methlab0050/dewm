@@ -35,6 +35,7 @@ pub enum GestureState {
         delta_y: f32,
         /// Axis lock, determined once `|delta| > AXIS_LOCK_THRESHOLD`.
         axis: Option<SwipeAxis>,
+        #[allow(dead_code)]
         started_at: Instant,
     },
 
@@ -43,6 +44,7 @@ pub enum GestureState {
         delta_x: f32,
         delta_y: f32,
         axis: Option<SwipeAxis>,
+        #[allow(dead_code)]
         started_at: Instant,
     },
 }
@@ -118,6 +120,7 @@ impl GestureTracker {
         completed_from_state(state)
     }
 
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
         !matches!(self.state, GestureState::Idle)
     }
@@ -135,7 +138,12 @@ pub enum CompletedGesture {
     /// 3-finger swipe along an axis.
     Navigate3 { delta_x: f32, delta_y: f32, axis: SwipeAxis },
     /// 4-finger swipe along an axis.
-    Overview4 { delta_x: f32, delta_y: f32, axis: SwipeAxis },
+    Overview4 {
+        #[allow(dead_code)]
+        delta_x: f32,
+        delta_y: f32,
+        axis: SwipeAxis,
+    },
     /// Gesture was cancelled by libinput (e.g. too many fingers lifted).
     Cancelled,
 }

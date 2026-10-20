@@ -102,6 +102,7 @@ impl OverviewState {
     }
 
     /// Toggle open/closed.
+    #[allow(dead_code)]
     pub fn toggle(&mut self, active_cell: (i32, i32), output_size: (i32, i32)) {
         match self.phase {
             OverviewPhase::Closed | OverviewPhase::Closing => self.open(active_cell, output_size),
@@ -174,6 +175,7 @@ impl OverviewState {
     }
 
     /// Scroll / pan the overview camera freely (legacy / direct pan).
+    #[allow(dead_code)]
     pub fn pan(&mut self, delta: Point<f32, Logical>) {
         self.camera_pos += delta;
         self.target_camera = self.camera_pos;
@@ -183,6 +185,7 @@ impl OverviewState {
         self.animation_progress > 0.001
     }
 
+    #[allow(dead_code)]
     pub fn is_interactive(&self) -> bool {
         matches!(self.phase, OverviewPhase::Open)
     }

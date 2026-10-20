@@ -61,6 +61,7 @@ pub struct DewmState {
     pub compositor_state:     CompositorState,
     pub xdg_shell_state:      XdgShellState,
     pub shm_state:            ShmState,
+    #[allow(dead_code)]
     pub output_manager_state: OutputManagerState,
     pub data_device_state:    DataDeviceState,
     pub seat_state:           SeatState<Self>,
