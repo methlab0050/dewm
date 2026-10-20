@@ -31,6 +31,7 @@
     # Test clients for the nested session
     foot
     git
+    (if pkgs ? vicinae then pkgs.vicinae else if inputs ? vicinae then inputs.vicinae.packages.${pkgs.stdenv.system}.default else null)
 
             (rustPlatform.buildRustPackage {
           pname = "rustmcp";

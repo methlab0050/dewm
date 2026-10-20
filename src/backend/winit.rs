@@ -106,12 +106,19 @@ pub fn run() -> Result<()> {
             Generic::new(display, Interest::READ, CalloopMode::Level),
             |_, display, state| {
                 unsafe {
-                    display.get_mut().dispatch_clients(state).unwrap();
+                    if let Err(err) = display.get_mut().dispatch_clients(state) {
+                        tracing::error!("Error dispatching Wayland clients: {err}");
+                    }
                 }
                 Ok(PostAction::Continue)
             },
         )
         .map_err(|e| anyhow::anyhow!("Failed to insert wayland server source: {e}"))?;
+
+    // ── Xwayland ──────────────────────────────────────────────────────────────
+    if let Err(err) = state.start_xwayland() {
+        tracing::warn!("Could not start Xwayland: {err}");
+    }
 
     backend.window().request_redraw();
 

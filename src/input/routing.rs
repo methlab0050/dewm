@@ -19,6 +19,7 @@ use smithay::{
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Point, Rectangle, SERIAL_COUNTER},
+    wayland::seat::WaylandFocus,
 };
 
 use crate::{
@@ -428,22 +429,30 @@ impl DewmState {
                         KeyAction::NavigateWorkspace(dir) => {
                             compositor.switch_workspace(dir);
                         }
+                        KeyAction::MoveWindow(dir) => {
+                            compositor.move_focused_window(dir, false);
+                        }
+                        KeyAction::MoveWindowAndFollow(dir) => {
+                            compositor.move_focused_window(dir, true);
+                        }
                         KeyAction::ToggleOverview => {
                             compositor.toggle_overview();
                         }
                         KeyAction::CloseFocused => {
                             if let Some(surface) = compositor.seat.get_keyboard().and_then(|k| k.current_focus()) {
                                 if let Some(window) = compositor.space.elements().find(|w| {
-                                    w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                                    w.wl_surface().as_deref() == Some(&surface)
                                 }) {
                                     if let Some(toplevel) = window.toplevel() {
                                         toplevel.send_close();
+                                    } else if let Some(x11) = window.x11_surface() {
+                                        let _ = x11.close();
                                     }
                                 }
                             }
                         }
                         KeyAction::ToggleFullscreen => {
-                            let toplevel = compositor
+                            let window = compositor
                                 .seat
                                 .get_keyboard()
                                 .and_then(|k| k.current_focus())
@@ -452,17 +461,32 @@ impl DewmState {
                                         .space
                                         .elements()
                                         .find(|w| {
-                                            w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                                            w.wl_surface().as_deref() == Some(&surface)
                                         })
-                                        .and_then(|w| w.toplevel().cloned())
+                                        .cloned()
                                 });
 
-                            if let Some(toplevel) = toplevel {
-                                compositor.toggle_fullscreen(&toplevel);
+                            if let Some(window) = window {
+                                if let Some(toplevel) = window.toplevel() {
+                                    compositor.toggle_fullscreen(toplevel);
+                                } else if let Some(x11) = window.x11_surface() {
+                                    let is_fs = x11.is_fullscreen();
+                                    let _ = x11.set_fullscreen(!is_fs);
+                                    let geo = compositor
+                                        .space
+                                        .outputs()
+                                        .next()
+                                        .cloned()
+                                        .and_then(|o| compositor.space.output_geometry(&o));
+                                    if let Some(geo) = geo {
+                                        let _ = x11.configure(geo);
+                                        compositor.space.map_element(window, geo.loc, false);
+                                    }
+                                }
                             }
                         }
                         KeyAction::ToggleMaximize => {
-                            let toplevel = compositor
+                            let window = compositor
                                 .seat
                                 .get_keyboard()
                                 .and_then(|k| k.current_focus())
@@ -471,13 +495,28 @@ impl DewmState {
                                         .space
                                         .elements()
                                         .find(|w| {
-                                            w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                                            w.wl_surface().as_deref() == Some(&surface)
                                         })
-                                        .and_then(|w| w.toplevel().cloned())
+                                        .cloned()
                                 });
 
-                            if let Some(toplevel) = toplevel {
-                                compositor.toggle_maximize(&toplevel);
+                            if let Some(window) = window {
+                                if let Some(toplevel) = window.toplevel() {
+                                    compositor.toggle_maximize(toplevel);
+                                } else if let Some(x11) = window.x11_surface() {
+                                    let is_max = x11.is_maximized();
+                                    let _ = x11.set_maximized(!is_max);
+                                    let geo = compositor
+                                        .space
+                                        .outputs()
+                                        .next()
+                                        .cloned()
+                                        .and_then(|o| compositor.space.output_geometry(&o));
+                                    if let Some(geo) = geo {
+                                        let _ = x11.configure(geo);
+                                        compositor.space.map_element(window, geo.loc, false);
+                                    }
+                                }
                             }
                         }
                         KeyAction::Quit => {

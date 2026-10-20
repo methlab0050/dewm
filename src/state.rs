@@ -13,6 +13,7 @@ use smithay::{
         WindowSurfaceType,
     },
     input::{
+        dnd::DndGrabHandler,
         pointer::{CursorImageStatus, Focus},
         Seat, SeatHandler, SeatState,
     },
@@ -36,6 +37,7 @@ use smithay::{
         pointer_constraints::PointerConstraintsHandler,
         selection::{
             data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
+            primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
             SelectionHandler,
         },
         shell::xdg::{
@@ -43,7 +45,9 @@ use smithay::{
             ToplevelSurface, XdgShellHandler, XdgShellState,
         },
         shm::{ShmHandler, ShmState},
+        xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
     },
+    xwayland::X11Wm,
 };
 
 use crate::{
@@ -86,31 +90,40 @@ pub struct DewmState {
     pub keybindings: KeybindingConfig,
 
     // ── Compositor loop control ───────────────────────────────────────────────
+    pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, DewmState>,
     pub loop_signal: LoopSignal,
     pub start_time:  std::time::Instant,
     pub last_frame:  std::time::Instant,
 
     // ── Cursor ───────────────────────────────────────────────────────────────
     pub cursor_status: CursorImageStatus,
+
+    // ── Xwayland & Selection ──────────────────────────────────────────────────
+    pub xwayland_shell_state: XWaylandShellState,
+    pub primary_selection_state: PrimarySelectionState,
+    pub xwm: Option<X11Wm>,
+    pub xdisplay: Option<u32>,
 }
 
 impl DewmState {
     /// Construct initial compositor state.
     pub fn new(
         display:     &mut Display<Self>,
-        event_loop:  &EventLoop<'_, Self>,
+        event_loop:  &EventLoop<'static, Self>,
     ) -> Self {
         let dh = display.handle();
         let clock = std::time::Instant::now();
 
-        let compositor_state     = CompositorState::new::<Self>(&dh);
-        let xdg_shell_state      = XdgShellState::new::<Self>(&dh);
-        let shm_state            = ShmState::new::<Self>(&dh, vec![]);
-        let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
-        let data_device_state    = DataDeviceState::new::<Self>(&dh);
-        let popups               = PopupManager::default();
-        let mut seat_state       = SeatState::new();
-        let mut seat             = seat_state.new_wl_seat(&dh, "dewm-seat0");
+        let compositor_state        = CompositorState::new::<Self>(&dh);
+        let xdg_shell_state         = XdgShellState::new::<Self>(&dh);
+        let shm_state               = ShmState::new::<Self>(&dh, vec![]);
+        let output_manager_state    = OutputManagerState::new_with_xdg_output::<Self>(&dh);
+        let data_device_state       = DataDeviceState::new::<Self>(&dh);
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
+        let xwayland_shell_state    = XWaylandShellState::new::<Self>(&dh);
+        let popups                  = PopupManager::default();
+        let mut seat_state          = SeatState::new();
+        let mut seat                = seat_state.new_wl_seat(&dh, "dewm-seat0");
 
         // Enable keyboard and pointer capabilities on the seat
         seat.add_keyboard(Default::default(), 200, 25).unwrap();
@@ -133,10 +146,15 @@ impl DewmState {
             overview_state:   OverviewState::new(),
             overview_dragger: OverviewDragger::new(),
             keybindings:      KeybindingConfig::default(),
+            loop_handle:      event_loop.handle(),
             loop_signal:      event_loop.get_signal(),
             start_time:       clock,
             last_frame:       clock,
             cursor_status:    CursorImageStatus::default_named(),
+            xwayland_shell_state,
+            primary_selection_state,
+            xwm:              None,
+            xdisplay:         None,
         }
     }
 
@@ -200,6 +218,98 @@ impl DewmState {
         } else {
             tracing::debug!(?from_cell, ?dir, "Workspace navigation blocked (empty source)");
             self.pan_animation.nudge_and_snap_back(from_origin.to_f64(), dir);
+        }
+    }
+
+    /// Move the currently focused window to an adjacent workspace in `dir`.
+    ///
+    /// If `follow` is true, the camera transitions to the target workspace and
+    /// the window retains keyboard focus.
+    /// If `follow` is false, the window moves to the target workspace, the camera
+    /// stays on the current workspace, and keyboard focus shifts to the next window.
+    pub fn move_focused_window(&mut self, dir: crate::workspace::grid::Direction, follow: bool) {
+        let from_cell = self.workspace_grid.active();
+        let to_cell = crate::workspace::grid::WorkspaceGrid::neighbour_coords(from_cell.0, from_cell.1, dir);
+
+        // Find the focused window, or fallback to active workspace's top window.
+        let window = self
+            .seat
+            .get_keyboard()
+            .and_then(|k| k.current_focus())
+            .and_then(|surface| {
+                self.space
+                    .elements()
+                    .find(|w| w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false))
+                    .cloned()
+            })
+            .or_else(|| {
+                self.workspace_grid.active_workspace().windows().last().cloned()
+            });
+
+        let Some(window) = window else { return; };
+
+        let old_origin = self.workspace_origin(from_cell);
+        let new_origin = self.workspace_origin(to_cell);
+        let cur_loc = self.space.element_location(&window).unwrap_or(old_origin);
+        let rel_pos = cur_loc - old_origin;
+
+        // Move window in grid and space
+        self.workspace_grid.move_window_to(&window, to_cell);
+        self.space.map_element(window.clone(), new_origin + rel_pos, true);
+
+        if follow {
+            // Navigate/teleport to the target workspace
+            self.workspace_grid.teleport_to(to_cell);
+            let migrations = self.workspace_grid.take_pending_migrations();
+            self.apply_workspace_migrations(&migrations);
+
+            let actual_target = self.workspace_grid.active();
+            let to_cam_origin = self.workspace_origin(actual_target);
+            tracing::info!(?from_cell, ?actual_target, "Moved window and following to workspace");
+
+            self.pan_animation.start_transition(to_cam_origin.to_f64());
+
+            // Maintain focus on the moved window
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                self.space.raise_element(&window, true);
+                if let Some(top) = window.toplevel() {
+                    keyboard.set_focus(self, Some(top.wl_surface().clone()), serial);
+                }
+                self.space.elements().for_each(|w| {
+                    w.set_activated(w == &window);
+                    if let Some(t) = w.toplevel() {
+                        t.send_pending_configure();
+                    }
+                });
+            }
+        } else {
+            tracing::info!(?from_cell, ?to_cell, "Moved window to workspace (staying on current)");
+            // Shift keyboard focus to the next remaining window on current workspace, or clear focus
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                let next_win = self.workspace_grid.active_workspace().windows().last().cloned();
+                if let Some(win) = next_win {
+                    self.space.raise_element(&win, true);
+                    if let Some(top) = win.toplevel() {
+                        keyboard.set_focus(self, Some(top.wl_surface().clone()), serial);
+                    }
+                    self.space.elements().for_each(|w| {
+                        w.set_activated(w == &win);
+                        if let Some(t) = w.toplevel() {
+                            t.send_pending_configure();
+                        }
+                    });
+                } else {
+                    self.space.elements().for_each(|w| {
+                        w.set_activated(false);
+                        if let Some(t) = w.toplevel() {
+                            t.send_pending_configure();
+                        }
+                    });
+                    keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                }
+            }
         }
     }
 
@@ -416,7 +526,13 @@ impl CompositorHandler for DewmState {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a smithay::reexports::wayland_server::Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor_state
+        if let Some(state) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+            return &state.compositor_state;
+        }
+        if let Some(state) = client.get_data::<ClientState>() {
+            return &state.compositor_state;
+        }
+        panic!("Unknown client data type")
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -852,6 +968,19 @@ impl SelectionHandler for DewmState {
 }
 
 impl WaylandDndGrabHandler for DewmState {}
+impl DndGrabHandler for DewmState {}
+
+impl PrimarySelectionHandler for DewmState {
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.primary_selection_state
+    }
+}
+
+impl XWaylandShellHandler for DewmState {
+    fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
+        &mut self.xwayland_shell_state
+    }
+}
 
 impl DataDeviceHandler for DewmState {
     fn data_device_state(&mut self) -> &mut DataDeviceState {
