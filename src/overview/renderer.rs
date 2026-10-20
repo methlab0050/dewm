@@ -32,8 +32,6 @@ pub struct CellLayout {
 }
 
 // ─── Catppuccin Mocha Color Palette ──────────────────────────────────────────
-const COLOR_SURFACE0: [f32; 4] = [0.192, 0.196, 0.267, 0.90]; // #313244
-const COLOR_SURFACE1: [f32; 4] = [0.271, 0.278, 0.353, 0.95]; // #45475a
 const COLOR_MAUVE: [f32; 4]    = [0.796, 0.651, 0.969, 1.0];  // #cba6f7 (active workspace)
 const COLOR_BLUE: [f32; 4]     = [0.537, 0.706, 0.980, 1.0];  // #89b4fa (drop target)
 const COLOR_BORDER: [f32; 4]   = [0.345, 0.357, 0.439, 0.6];  // #585b70 (inactive border)
@@ -170,29 +168,16 @@ where
 
     let progress = state.overview_state.animation_progress.clamp(0.0, 1.0);
 
-    // 1. Render workspace cell backgrounds and borders
+    // 1. Render workspace cell borders
     for layout in &layouts {
         let is_active = layout.coord == active_cell;
         let is_hovered = Some(layout.coord) == hovered_cell;
 
-        // Background color
-        let mut bg_color = if is_hovered {
-            COLOR_SURFACE1
-        } else {
-            COLOR_SURFACE0
-        };
-        bg_color[3] *= progress;
-
-        let bg_elem = solid_color_element(layout.rect, bg_color, scale);
-        elements.push(DewmRenderElement::SolidColor(bg_elem));
-
-        // Border
+        // Border: highlight blue only when actively dragging over drop target; active workspace gets mauve
         let (mut border_color, border_thickness) = if is_dragging && is_hovered {
             (COLOR_BLUE, 4)
         } else if is_active {
             (COLOR_MAUVE, 3)
-        } else if is_hovered {
-            (COLOR_SURFACE1, 2)
         } else {
             (COLOR_BORDER, 1)
         };
