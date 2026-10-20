@@ -11,6 +11,8 @@ use smithay::{
 pub struct Workspace {
     /// Windows currently assigned to this workspace.
     pub windows: Vec<Window>,
+    #[cfg(test)]
+    pub test_occupied: bool,
 }
 
 impl Workspace {
@@ -20,6 +22,10 @@ impl Workspace {
 
     /// Returns true if this workspace contains at least one window.
     pub fn is_occupied(&self) -> bool {
+        #[cfg(test)]
+        if self.test_occupied {
+            return true;
+        }
         !self.windows.is_empty()
     }
 
@@ -52,7 +58,7 @@ impl Workspace {
     }
 
     /// Iterate over all windows in this workspace.
-    pub fn windows(&self) -> impl Iterator<Item = &Window> {
+    pub fn windows(&self) -> impl DoubleEndedIterator<Item = &Window> {
         self.windows.iter()
     }
 }

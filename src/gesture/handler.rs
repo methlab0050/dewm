@@ -69,11 +69,11 @@ impl DewmState {
                     if delta_y < 0.0 {
                         // Swipe up → open overview
                         tracing::info!("4-finger swipe up → opening overview");
-                        self.overview_state.open();
+                        self.enter_overview();
                     } else {
                         // Swipe down → close overview
                         tracing::info!("4-finger swipe down → closing overview");
-                        self.overview_state.close();
+                        self.exit_overview();
                     }
                 }
             }

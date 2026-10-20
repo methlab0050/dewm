@@ -49,7 +49,7 @@ use smithay::{
 use crate::{
     gesture::tracker::GestureTracker,
     input::keybindings::KeybindingConfig,
-    overview::state::OverviewState,
+    overview::{drag::OverviewDragger, state::OverviewState},
     workspace::{animation::PanAnimation, grid::WorkspaceGrid},
 };
 
@@ -77,8 +77,10 @@ pub struct DewmState {
     pub pan_animation: PanAnimation,
     /// Tracks multi-touch swipe gesture phases and dispatches actions.
     pub gesture_tracker: GestureTracker,
-    /// Overview mode animation and drag state.
+    /// Overview mode animation state.
     pub overview_state: OverviewState,
+    /// Overview window drag-and-drop controller.
+    pub overview_dragger: OverviewDragger,
     /// Keybinding configuration (e.g. Super+D → Vicinae).
     pub keybindings: KeybindingConfig,
 
@@ -125,14 +127,15 @@ impl DewmState {
             popups,
             space:           Space::default(),
             workspace_grid:  WorkspaceGrid::new(),
-            pan_animation:   PanAnimation::new(),
-            gesture_tracker: GestureTracker::new(),
-            overview_state:  OverviewState::new(),
-            keybindings:     KeybindingConfig::default(),
-            loop_signal:     event_loop.get_signal(),
-            start_time:      clock,
-            last_frame:      clock,
-            cursor_status:   CursorImageStatus::default_named(),
+            pan_animation:    PanAnimation::new(),
+            gesture_tracker:  GestureTracker::new(),
+            overview_state:   OverviewState::new(),
+            overview_dragger: OverviewDragger::new(),
+            keybindings:      KeybindingConfig::default(),
+            loop_signal:      event_loop.get_signal(),
+            start_time:       clock,
+            last_frame:       clock,
+            cursor_status:    CursorImageStatus::default_named(),
         }
     }
 
@@ -155,6 +158,9 @@ impl DewmState {
         let from_origin = self.workspace_origin(from_cell);
 
         if let Some(to_cell) = self.workspace_grid.navigate(dir) {
+            let migrations = self.workspace_grid.take_pending_migrations();
+            self.apply_workspace_migrations(&migrations);
+
             let to_origin = self.workspace_origin(to_cell);
             tracing::info!(?from_cell, ?to_cell, "Switching workspace");
 
@@ -193,6 +199,147 @@ impl DewmState {
         } else {
             tracing::debug!(?from_cell, ?dir, "Workspace navigation blocked (empty source)");
             self.pan_animation.nudge_and_snap_back(from_origin.to_f64(), dir);
+        }
+    }
+
+    /// Teleport directly to `target` workspace (used by overview selection).
+    pub fn teleport_to_workspace(&mut self, target: (i32, i32)) {
+        let from_cell = self.workspace_grid.active();
+        self.workspace_grid.teleport_to(target);
+        let migrations = self.workspace_grid.take_pending_migrations();
+        self.apply_workspace_migrations(&migrations);
+
+        let actual_target = self.workspace_grid.active();
+        let to_origin = self.workspace_origin(actual_target);
+        tracing::info!(?from_cell, ?actual_target, "Teleporting to workspace");
+
+        self.pan_animation.current_camera = to_origin.to_f64();
+        self.pan_animation.target_camera = to_origin.to_f64();
+        self.pan_animation.phase = crate::workspace::animation::PanPhase::Idle;
+        let output = self.space.outputs().next().cloned();
+        if let Some(output) = output {
+            self.space.map_output(&output, to_origin);
+        }
+
+        // Transfer keyboard focus to frontmost window on target workspace
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            let target_win = self
+                .workspace_grid
+                .get(actual_target)
+                .and_then(|ws| ws.windows.last())
+                .cloned();
+
+            if let Some(win) = target_win {
+                self.space.raise_element(&win, true);
+                if let Some(top) = win.toplevel() {
+                    keyboard.set_focus(self, Some(top.wl_surface().clone()), serial);
+                }
+                self.space.elements().for_each(|w| {
+                    w.set_activated(w == &win);
+                    if let Some(t) = w.toplevel() {
+                        t.send_pending_configure();
+                    }
+                });
+            } else {
+                self.space.elements().for_each(|w| {
+                    w.set_activated(false);
+                    if let Some(t) = w.toplevel() {
+                        t.send_pending_configure();
+                    }
+                });
+                keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+            }
+        }
+    }
+
+    /// Enter overview mode, centering on the current workspace.
+    pub fn enter_overview(&mut self) {
+        let current = self.workspace_grid.active();
+        let output_size = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|o| self.space.output_geometry(o))
+            .map(|geo| (geo.size.w, geo.size.h))
+            .unwrap_or((1280, 800));
+
+        self.overview_state.open(current, output_size);
+    }
+
+    /// Exit overview mode, zooming back into the active workspace,
+    /// and pruning any empty workspace left behind.
+    pub fn exit_overview(&mut self) {
+        self.overview_state.close();
+        let current = self.workspace_grid.active();
+        self.workspace_grid.prune_and_compact(current);
+        let migrations = self.workspace_grid.take_pending_migrations();
+        self.apply_workspace_migrations(&migrations);
+    }
+
+    /// Apply workspace migrations (when intermediate empty rows/columns are compacted).
+    /// Shifts window locations in Smithay `Space`, updates camera coordinates, and
+    /// updates overview state if open.
+    pub fn apply_workspace_migrations(&mut self, migrations: &[((i32, i32), (i32, i32))]) {
+        if migrations.is_empty() {
+            return;
+        }
+
+        let out_size = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|o| self.space.output_geometry(o))
+            .map(|geo| (geo.size.w, geo.size.h))
+            .unwrap_or((1280, 800));
+
+        for &(old_coord, new_coord) in migrations {
+            let dc = new_coord.1 - old_coord.1;
+            let dr = new_coord.0 - old_coord.0;
+            let shift_x = dc * out_size.0;
+            let shift_y = dr * out_size.1;
+            let shift_vec = Point::from((shift_x, shift_y));
+
+            tracing::info!(?old_coord, ?new_coord, ?shift_vec, "Compacting workspace gap");
+
+            // 1. Shift all windows in the migrated workspace in Space
+            if let Some(ws) = self.workspace_grid.get(new_coord) {
+                for window in ws.windows() {
+                    if let Some(loc) = self.space.element_location(window) {
+                        let new_loc = loc + shift_vec;
+                        self.space.map_element(window.clone(), new_loc, false);
+                    }
+                }
+            }
+
+            // 2. If the active workspace was shifted, adjust camera positions so view doesn't jump
+            if self.workspace_grid.active() == new_coord {
+                self.pan_animation.current_camera += shift_vec.to_f64();
+                self.pan_animation.target_camera += shift_vec.to_f64();
+                let output = self.space.outputs().next().cloned();
+                if let Some(output) = output {
+                    self.space.map_output(&output, self.pan_animation.current_camera.to_i32_round());
+                }
+            }
+
+            // 3. If overview is active, adjust overview state
+            if self.overview_state.entry_workspace == old_coord {
+                self.overview_state.entry_workspace = new_coord;
+            }
+            if self.overview_state.focused_cell == old_coord {
+                self.overview_state.focused_cell = new_coord;
+                self.overview_state.target_camera =
+                    crate::overview::state::OverviewState::cell_center(new_coord, out_size);
+            }
+        }
+    }
+
+    /// Toggle overview mode.
+    pub fn toggle_overview(&mut self) {
+        if self.overview_state.is_visible() {
+            self.exit_overview();
+        } else {
+            self.enter_overview();
         }
     }
 

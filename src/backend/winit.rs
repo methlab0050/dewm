@@ -34,7 +34,10 @@ use smithay::{
     wayland::socket::ListeningSocketSource,
 };
 
-use crate::state::{ClientState, DewmState};
+use crate::{
+    rendering::elements::DewmRenderElement,
+    state::{ClientState, DewmState},
+};
 
 pub fn run() -> Result<()> {
     tracing::info!("Starting dewm with Winit backend (nested mode)");
@@ -138,9 +141,13 @@ pub fn run() -> Result<()> {
                     state.last_frame = now;
 
                     let anim_updated = state.pan_animation.update(dt);
+                    let overview_updated = state.overview_state.update(dt);
                     if anim_updated || state.pan_animation.is_active() {
                         let cam = state.pan_animation.current_camera.to_i32_round();
                         state.space.map_output(&output, cam);
+                        backend.window().request_redraw();
+                    }
+                    if overview_updated {
                         backend.window().request_redraw();
                     }
 
@@ -150,23 +157,49 @@ pub fn run() -> Result<()> {
                     {
                         match backend.bind() {
                             Ok((renderer, mut framebuffer)) => {
-                                if let Err(err) = smithay::desktop::space::render_output::<
-                                    _,
-                                    WaylandSurfaceRenderElement<GlesRenderer>,
-                                    _,
-                                    _,
-                                >(
-                                    &output,
-                                    renderer,
-                                    &mut framebuffer,
-                                    1.0,
-                                    0,
-                                    [&state.space],
-                                    &[],
-                                    &mut damage_tracker,
-                                    [0.118, 0.118, 0.180, 1.0], // Catppuccin Mocha base #1e1e2e
-                                ) {
-                                    tracing::warn!("Error rendering frame: {err}");
+                                let clear_color = [0.118, 0.118, 0.180, 1.0]; // Catppuccin Mocha base #1e1e2e
+
+                                if state.overview_state.is_visible() {
+                                    let elements = crate::overview::renderer::overview_render_elements(
+                                        renderer,
+                                        &state,
+                                        &output,
+                                    );
+                                    if let Err(err) = damage_tracker.render_output(
+                                        renderer,
+                                        &mut framebuffer,
+                                        0,
+                                        &elements,
+                                        clear_color,
+                                    ) {
+                                        tracing::warn!("Error rendering overview frame: {err}");
+                                    }
+                                } else {
+                                    let res = smithay::desktop::space::space_render_elements::<
+                                        GlesRenderer,
+                                        smithay::desktop::Window,
+                                        _,
+                                    >(renderer, [&state.space], &output, 1.0);
+
+                                    match res {
+                                        Ok(space_elements) => {
+                                            let elements: Vec<DewmRenderElement<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>> =
+                                                space_elements.into_iter().map(DewmRenderElement::Space).collect();
+
+                                            if let Err(err) = damage_tracker.render_output(
+                                                renderer,
+                                                &mut framebuffer,
+                                                0,
+                                                &elements,
+                                                clear_color,
+                                            ) {
+                                                tracing::warn!("Error rendering normal frame: {err}");
+                                            }
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!("Error extracting space render elements: {err}");
+                                        }
+                                    }
                                 }
                             }
                             Err(err) => {

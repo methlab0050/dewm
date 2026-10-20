@@ -42,6 +42,8 @@ pub struct WorkspaceGrid {
     workspaces: BTreeMap<(i32, i32), Workspace>,
     /// Currently focused cell `(row, col)`.
     active: (i32, i32),
+    /// Pending migrations from recent compaction `((old_r, old_c), (new_r, new_c))`.
+    pub pending_migrations: Vec<((i32, i32), (i32, i32))>,
 }
 
 impl WorkspaceGrid {
@@ -52,6 +54,7 @@ impl WorkspaceGrid {
         Self {
             workspaces,
             active: (0, 0),
+            pending_migrations: Vec::new(),
         }
     }
 
@@ -115,12 +118,88 @@ impl WorkspaceGrid {
         (rows, cols)
     }
 
+    /// Prune any empty workspace other than `keep`.
+    pub fn prune_empty_except(&mut self, keep: (i32, i32)) {
+        self.workspaces.retain(|&coord, ws| {
+            coord == keep || ws.is_occupied()
+        });
+    }
+
+    /// Shift rows and columns to fill any intermediate empty rows and columns.
+    /// Returns the list of migrations `((old_r, old_c), (new_r, new_c))` for
+    /// workspaces that moved.
+    pub fn compact_empty_gaps(&mut self) -> Vec<((i32, i32), (i32, i32))> {
+        if self.workspaces.is_empty() {
+            return Vec::new();
+        }
+
+        // 1. Gather all unique row and column indices
+        let mut rows: Vec<i32> = self.workspaces.keys().map(|&(r, _)| r).collect();
+        let mut cols: Vec<i32> = self.workspaces.keys().map(|&(_, c)| c).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        cols.sort_unstable();
+        cols.dedup();
+
+        let min_r = *rows.first().unwrap();
+        let max_r = *rows.last().unwrap();
+        let min_c = *cols.first().unwrap();
+        let max_c = *cols.last().unwrap();
+
+        // 2. Identify intermediate empty rows and columns
+        let empty_rows: Vec<i32> = (min_r..=max_r).filter(|r| !rows.contains(r)).collect();
+        let empty_cols: Vec<i32> = (min_c..=max_c).filter(|c| !cols.contains(c)).collect();
+
+        if empty_rows.is_empty() && empty_cols.is_empty() {
+            return Vec::new();
+        }
+
+        // 3. Compute mapping for each coordinate
+        let mut migrations = Vec::new();
+        let old_workspaces = std::mem::take(&mut self.workspaces);
+        let mut new_workspaces = BTreeMap::new();
+
+        for ((r, c), ws) in old_workspaces {
+            let shift_r = empty_rows.iter().filter(|&&er| er < r).count() as i32;
+            let shift_c = empty_cols.iter().filter(|&&ec| ec < c).count() as i32;
+            let new_coord = (r - shift_r, c - shift_c);
+
+            if new_coord != (r, c) {
+                migrations.push(((r, c), new_coord));
+            }
+
+            if self.active == (r, c) {
+                self.active = new_coord;
+            }
+
+            new_workspaces.insert(new_coord, ws);
+        }
+
+        self.workspaces = new_workspaces;
+        self.pending_migrations.extend(migrations.iter().copied());
+        migrations
+    }
+
+    /// Prune empty workspaces except `keep`, and compact any intermediate empty gaps.
+    pub fn prune_and_compact(&mut self, keep: (i32, i32)) -> Vec<((i32, i32), (i32, i32))> {
+        self.prune_empty_except(keep);
+        self.compact_empty_gaps()
+    }
+
+    /// Take and clear any accumulated pending migrations.
+    pub fn take_pending_migrations(&mut self) -> Vec<((i32, i32), (i32, i32))> {
+        std::mem::take(&mut self.pending_migrations)
+    }
+
     // ── Navigation ────────────────────────────────────────────────────────────
 
     /// Attempt to navigate in `dir`.
     ///
     /// Returns `Some((row, col))` of the new active workspace on success, or
     /// `None` if the move is blocked (swipe should snap back).
+    ///
+    /// When navigating away from an empty workspace, the empty workspace is pruned
+    /// and any intermediate empty rows/columns are compacted.
     ///
     /// # Expansion rule
     ///
@@ -136,13 +215,15 @@ impl WorkspaceGrid {
         if self.exists(target) {
             // Navigating to an existing workspace is unconditionally allowed.
             self.active = target;
-            Some(target)
+            self.prune_and_compact(target);
+            Some(self.active)
         } else {
             // Only expand if the current workspace has at least one window.
             if self.active_workspace().is_occupied() {
                 self.ensure_exists(target);
                 self.active = target;
-                Some(target)
+                self.prune_and_compact(target);
+                Some(self.active)
             } else {
                 // Empty source → snap back.
                 None
@@ -151,10 +232,12 @@ impl WorkspaceGrid {
     }
 
     /// Teleport directly to a coordinate (used by overview click / drag-drop).
-    /// Creates the workspace if it does not exist.
+    /// Creates the workspace if it does not exist. Prunes any empty workspace left behind
+    /// and compacts intermediate empty gaps.
     pub fn teleport_to(&mut self, target: (i32, i32)) {
         self.ensure_exists(target);
         self.active = target;
+        self.prune_and_compact(target);
     }
 
     // ── Window management ─────────────────────────────────────────────────────
@@ -255,6 +338,8 @@ mod tests {
         // Moving Up into an existing workspace succeeds even if source is empty
         assert_eq!(grid.navigate(Direction::Up), Some((-1, 0)));
         assert_eq!(grid.active(), (-1, 0));
+        // Source (0, 0) was empty, so navigating away pruned it
+        assert!(!grid.exists((0, 0)));
     }
 
     #[test]
@@ -263,11 +348,41 @@ mod tests {
         grid.teleport_to((-2, 3));
         assert_eq!(grid.active(), (-2, 3));
         assert!(grid.get((-2, 3)).is_some());
+        // Since (0, 0) was empty, teleporting away pruned (0, 0)
+        assert!(!grid.exists((0, 0)));
         let (min_r, max_r, min_c, max_c) = grid.bounds();
         assert_eq!(min_r, -2);
-        assert_eq!(max_r, 0);
-        assert_eq!(min_c, 0);
+        assert_eq!(max_r, -2);
+        assert_eq!(min_c, 3);
         assert_eq!(max_c, 3);
+    }
+
+    #[test]
+    fn empty_workspace_pruned_on_navigation() {
+        let mut grid = WorkspaceGrid::new();
+        assert!(grid.exists((0, 0)));
+        // Navigate to existing (0, 1)
+        grid.ensure_exists((0, 1));
+        assert_eq!(grid.navigate(Direction::Right), Some((0, 1)));
+        // (0, 0) was empty and left behind -> pruned!
+        assert!(!grid.exists((0, 0)));
+        assert!(grid.exists((0, 1)));
+    }
+
+    #[test]
+    fn prune_empty_except_preserves_occupied_and_active() {
+        let mut grid = WorkspaceGrid::new();
+        grid.ensure_exists((0, 0)); // empty
+        grid.ensure_exists((0, 1)); // empty
+        grid.ensure_exists((0, 2)); // empty
+
+        // Keep (0, 1)
+        grid.prune_empty_except((0, 1));
+
+        // (0, 0) and (0, 2) were empty and not keep -> pruned!
+        assert!(!grid.exists((0, 0)));
+        assert!(grid.exists((0, 1)));
+        assert!(!grid.exists((0, 2)));
     }
 
     #[test]
@@ -278,5 +393,54 @@ mod tests {
         assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Up), (-2, -1));
         assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Right), (-1, 0));
         assert_eq!(WorkspaceGrid::neighbour_coords(-1, -1, Direction::Down), (0, -1));
+    }
+
+    #[test]
+    fn compact_intermediate_empty_column() {
+        let mut grid = WorkspaceGrid::new();
+        // Setup (1, 1), (1, 2), (1, 3)
+        grid.ensure_exists((1, 1));
+        grid.ensure_exists((1, 2));
+        grid.ensure_exists((1, 3));
+
+        grid.get_mut((1, 1)).unwrap().test_occupied = true;
+        grid.get_mut((1, 2)).unwrap().test_occupied = false; // emptied!
+        grid.get_mut((1, 3)).unwrap().test_occupied = true;
+
+        // Teleport to (1, 1) -> (1, 2) is pruned, and intermediate col 2 is compacted!
+        grid.teleport_to((1, 1));
+
+        // (1, 3) must have shifted to (1, 2)!
+        assert!(grid.exists((1, 1)));
+        assert!(grid.exists((1, 2)));
+        assert!(!grid.exists((1, 3)));
+        assert_eq!(grid.active(), (1, 1));
+
+        // Now navigate right from (1, 1) -> succeeds and lands on (1, 2)!
+        assert_eq!(grid.navigate(Direction::Right), Some((1, 2)));
+    }
+
+    #[test]
+    fn compact_intermediate_empty_row() {
+        let mut grid = WorkspaceGrid::new();
+        // Setup (1, 1), (2, 1), (3, 1)
+        grid.ensure_exists((1, 1));
+        grid.ensure_exists((2, 1));
+        grid.ensure_exists((3, 1));
+
+        grid.get_mut((1, 1)).unwrap().test_occupied = true;
+        grid.get_mut((2, 1)).unwrap().test_occupied = false; // emptied!
+        grid.get_mut((3, 1)).unwrap().test_occupied = true;
+
+        grid.teleport_to((1, 1));
+
+        // (3, 1) shifted up to (2, 1)!
+        assert!(grid.exists((1, 1)));
+        assert!(grid.exists((2, 1)));
+        assert!(!grid.exists((3, 1)));
+        assert_eq!(grid.active(), (1, 1));
+
+        // Now navigate down from (1, 1) -> succeeds and lands on (2, 1)!
+        assert_eq!(grid.navigate(Direction::Down), Some((2, 1)));
     }
 }

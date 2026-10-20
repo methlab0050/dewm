@@ -8,6 +8,7 @@ use smithay::{
     backend::renderer::{
         element::{
             solid::SolidColorRenderElement,
+            utils::{CropRenderElement, RelocateRenderElement, RescaleRenderElement},
             Wrap,
         },
         ImportAll, ImportMem,
@@ -25,6 +26,9 @@ smithay::backend::renderer::element::render_elements! {
 
     // Solid-colour rectangles used for the overview cell hover highlight.
     SolidColor=SolidColorRenderElement,
+
+    // Scaled window preview in overview mode
+    Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<E>>>,
 
     // Custom element wrap.
     Custom=Wrap<E>,

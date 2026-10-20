@@ -49,7 +49,30 @@ impl DewmState {
                 let current_pos = pointer.current_location();
                 let delta = event.delta();
                 let pos = current_pos + Point::from((delta.x, delta.y));
-                let under = self.surface_under(pos);
+
+                let under = if self.overview_state.is_visible() {
+                    let output_info = self.space.outputs().next().and_then(|o| {
+                        self.space.output_geometry(o).map(|geo| (geo.loc.to_f64(), (geo.size.w, geo.size.h)))
+                    });
+                    if let Some((geo_loc, out_size)) = output_info {
+                        let out_pos = pos - geo_loc;
+                        let cursor_pos = (out_pos.x as f32, out_pos.y as f32);
+                        let active = self.workspace_grid.active();
+                        self.overview_state.hovered_cell = crate::overview::drag::hit_test_cell(
+                            cursor_pos,
+                            &self.workspace_grid,
+                            active,
+                            out_size,
+                            self.overview_state.camera_pos,
+                            self.overview_state.animation_progress,
+                        );
+                        self.overview_dragger.update(cursor_pos);
+                    }
+                    None
+                } else {
+                    self.surface_under(pos)
+                };
+
                 pointer.motion(
                     self,
                     under,
@@ -69,7 +92,26 @@ impl DewmState {
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
                 let serial = SERIAL_COUNTER.next_serial();
                 let Some(pointer) = self.seat.get_pointer() else { return; };
-                let under = self.surface_under(pos);
+
+                let under = if self.overview_state.is_visible() {
+                    let out_pos = pos - output_geo.loc.to_f64();
+                    let cursor_pos = (out_pos.x as f32, out_pos.y as f32);
+                    let out_size = (output_geo.size.w, output_geo.size.h);
+                    let active = self.workspace_grid.active();
+                    self.overview_state.hovered_cell = crate::overview::drag::hit_test_cell(
+                        cursor_pos,
+                        &self.workspace_grid,
+                        active,
+                        out_size,
+                        self.overview_state.camera_pos,
+                        self.overview_state.animation_progress,
+                    );
+                    self.overview_dragger.update(cursor_pos);
+                    None
+                } else {
+                    self.surface_under(pos)
+                };
+
                 pointer.motion(
                     self,
                     under,
@@ -93,6 +135,83 @@ impl DewmState {
 
                 const BTN_LEFT: u32 = 0x110;
                 const BTN_RIGHT: u32 = 0x111;
+
+                if self.overview_state.is_visible() {
+                    let loc = pointer.current_location();
+                    let output_info = self.space.outputs().next().and_then(|o| {
+                        self.space.output_geometry(o).map(|geo| (geo.loc.to_f64(), (geo.size.w, geo.size.h)))
+                    });
+
+                    if let Some((geo_loc, out_size)) = output_info {
+                        let out_pos = loc - geo_loc;
+                        let cursor_pos = (out_pos.x as f32, out_pos.y as f32);
+                        let active = self.workspace_grid.active();
+
+                        if button == BTN_LEFT {
+                            if button_state == ButtonState::Pressed {
+                                self.overview_dragger.try_begin(
+                                    cursor_pos,
+                                    &self.workspace_grid,
+                                    &self.space,
+                                    active,
+                                    out_size,
+                                    self.overview_state.camera_pos,
+                                    self.overview_state.animation_progress,
+                                );
+                            } else if button_state == ButtonState::Released {
+                                if let Some((window, from, to, is_dragging)) =
+                                    self.overview_dragger.finish(
+                                        cursor_pos,
+                                        &self.workspace_grid,
+                                        active,
+                                        out_size,
+                                        self.overview_state.camera_pos,
+                                        self.overview_state.animation_progress,
+                                    )
+                                {
+                                    if is_dragging {
+                                        if from != to {
+                                            tracing::info!(?from, ?to, "Overview: moved window");
+                                            let old_origin = self.workspace_origin(from);
+                                            let new_origin = self.workspace_origin(to);
+                                            let cur_loc = self.space.element_location(&window).unwrap_or(old_origin);
+                                            let rel_pos = cur_loc - old_origin;
+                                            self.workspace_grid.move_window_to(&window, to);
+                                            self.space.map_element(window, new_origin + rel_pos, true);
+                                        }
+                                    } else {
+                                        // Tap without dragging! Focus window, teleport to its workspace, and exit overview.
+                                        tracing::info!(?from, "Overview: tapped window -> focusing & zooming into workspace");
+                                        self.space.raise_element(&window, true);
+                                        self.teleport_to_workspace(from);
+                                        if let Some(keyboard) = self.seat.get_keyboard() {
+                                            let serial = SERIAL_COUNTER.next_serial();
+                                            if let Some(top) = window.toplevel() {
+                                                keyboard.set_focus(self, Some(top.wl_surface().clone()), serial);
+                                            }
+                                        }
+                                        self.exit_overview();
+                                    }
+                                } else if let Some(target) =
+                                    crate::overview::drag::hit_test_cell(
+                                        cursor_pos,
+                                        &self.workspace_grid,
+                                        active,
+                                        out_size,
+                                        self.overview_state.camera_pos,
+                                        self.overview_state.animation_progress,
+                                    )
+                                {
+                                    self.teleport_to_workspace(target);
+                                    self.exit_overview();
+                                }
+                            }
+                        } else if button == BTN_RIGHT && button_state == ButtonState::Pressed {
+                            self.overview_dragger.cancel();
+                        }
+                    }
+                    return;
+                }
 
                 if button_state == ButtonState::Pressed && !pointer.is_grabbed() {
                     let loc = pointer.current_location();
@@ -180,6 +299,29 @@ impl DewmState {
                 let vertical_amount = event
                     .amount(Axis::Vertical)
                     .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+
+                // If in overview mode, two-finger swipe or mouse wheel snaps across workspaces!
+                if self.overview_state.is_visible() {
+                    let out_size = self
+                        .space
+                        .outputs()
+                        .next()
+                        .and_then(|o| self.space.output_geometry(o))
+                        .map(|geo| (geo.size.w, geo.size.h))
+                        .unwrap_or((1280, 800));
+
+                    let is_discrete = matches!(source, AxisSource::Wheel)
+                        || event.amount_v120(Axis::Horizontal).is_some()
+                        || event.amount_v120(Axis::Vertical).is_some();
+
+                    self.overview_state.snap_scroll(
+                        Point::from((horizontal_amount as f32, vertical_amount as f32)),
+                        is_discrete,
+                        &self.workspace_grid,
+                        out_size,
+                    );
+                    return;
+                }
                 let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
                 let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
 
@@ -255,6 +397,21 @@ impl DewmState {
 
                 let keysym = handle.modified_sym();
 
+                if compositor.overview_state.is_visible() {
+                    if keysym == smithay::input::keyboard::Keysym::Escape {
+                        compositor.exit_overview();
+                        return FilterResult::Intercept(());
+                    } else if keysym == smithay::input::keyboard::Keysym::Return
+                        || keysym == smithay::input::keyboard::Keysym::KP_Enter
+                        || keysym == smithay::input::keyboard::Keysym::space
+                    {
+                        let target = compositor.overview_state.focused_cell;
+                        compositor.teleport_to_workspace(target);
+                        compositor.exit_overview();
+                        return FilterResult::Intercept(());
+                    }
+                }
+
                 if let Some(action) = compositor.keybindings.lookup(modifiers, keysym).cloned() {
                     match action {
                         KeyAction::SpawnProcess(cmd) => {
@@ -264,7 +421,7 @@ impl DewmState {
                             compositor.switch_workspace(dir);
                         }
                         KeyAction::ToggleOverview => {
-                            compositor.overview_state.toggle();
+                            compositor.toggle_overview();
                         }
                         KeyAction::CloseFocused => {
                             if let Some(surface) = compositor.seat.get_keyboard().and_then(|k| k.current_focus()) {

@@ -136,8 +136,10 @@ impl Default for KeybindingConfig {
                     NavigateWorkspace(Direction::Down)),
 
                 // ── Overview ─────────────────────────────────────────────────
-                b(ModifierMask::super_only(), Keysym::Tab,
-                    ToggleOverview),
+                b(ModifierMask::super_only(), Keysym::Tab, ToggleOverview),
+                b(ModifierMask::alt_only(),   Keysym::Tab, ToggleOverview),
+                b(ModifierMask::alt_only(),   Keysym::o,   ToggleOverview),
+                b(ModifierMask::super_only(), Keysym::o,   ToggleOverview),
 
                 // ── Window management ─────────────────────────────────────────
                 b(ModifierMask::super_only(), Keysym::q,  CloseFocused),
